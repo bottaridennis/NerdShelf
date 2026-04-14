@@ -1,0 +1,61 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", ui-serif, Georgia, serif;
+}
+
+:root {
+  --bg-dark: #0a0a0a;
+  --card-glass: rgba(255, 255, 255, 0.03);
+  --card-border: rgba(255, 255, 255, 0.08);
+  
+  --accent-dnd: #9b1c1c; /* Crimson */
+  --accent-manga: #7e22ce; /* Purple */
+  --accent-book: #b45309; /* Bronze/Gold */
+}
+
+body {
+  background-color: var(--bg-dark);
+  color: #e5e5e5;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.glass-card {
+  background: var(--card-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.category-gdr { border-left: 4px solid var(--accent-dnd); }
+.category-manga { border-left: 4px solid var(--accent-manga); }
+.category-book { border-left: 4px solid var(--accent-book); }
+
+.btn-gdr { background-color: var(--accent-dnd); }
+.btn-manga { background-color: var(--accent-manga); }
+.btn-book { background-color: var(--accent-book); }
+
+.aspect-cover {
+  aspect-ratio: 2 / 3;
+}
+
+.cover-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 12px;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
