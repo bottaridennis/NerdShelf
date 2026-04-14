@@ -155,11 +155,8 @@ const CategoryChip = ({
   </button>
 );
 
-const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit, onOpenDetails }: { 
+const ItemCard = ({ item, onOpenDetails }: { 
   item: LibraryItem; 
-  onDelete: (id: string) => void;
-  onUpdateStatus: (id: string, status: Status) => void;
-  onEdit: (item: LibraryItem) => void;
   onOpenDetails: (item: LibraryItem) => void;
   key?: string;
 }) => {
@@ -175,14 +172,15 @@ const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit, onOpenDetails }: {
   return (
     <motion.div 
       layout
-      initial={{ opacity: 0, x: -20 }}
-      animate={{ opacity: 1, x: 0 }}
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className={cn("glass-card p-4 rounded-2xl flex items-center space-x-4 group relative overflow-hidden", config.border)}
+      whileHover={{ y: -5 }}
+      className={cn("glass-card p-4 rounded-2xl flex flex-row sm:flex-col items-center sm:items-stretch space-x-4 sm:space-x-0 sm:space-y-4 group relative overflow-hidden", config.border)}
     >
       <button 
         onClick={() => onOpenDetails(item)}
-        className="w-20 h-28 flex-shrink-0 bg-white/5 rounded-lg overflow-hidden relative hover:scale-105 transition-transform active:scale-95"
+        className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] flex-shrink-0 bg-zinc-800/50 rounded-lg overflow-hidden relative hover:scale-[1.02] transition-transform active:scale-95 shadow-xl border border-white/5"
       >
         {item.coverUrl ? (
           <img 
@@ -193,22 +191,40 @@ const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit, onOpenDetails }: {
           />
         ) : (
           <div className={cn("w-full h-full flex items-center justify-center", config.color)}>
-            <Icon className="w-8 h-8 opacity-20" />
+            <Icon className="w-10 h-10 sm:w-12 sm:h-12 opacity-20" />
           </div>
         )}
       </button>
       
-      <div className="flex-1 min-w-0 py-2 flex flex-col justify-center">
-        <h3 className="text-lg font-medium text-white leading-tight break-words">{item.title}</h3>
-        <div className="flex items-center space-x-2 mt-0.5">
-          {item.author && (
-            <p className="text-sm text-zinc-500 break-words">{item.author}</p>
-          )}
-          {item.category === 'manga' && item.totalVolumes && (
-            <span className="text-[10px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30">
-              Vol. {item.totalVolumes}
-            </span>
-          )}
+      <div className="flex-1 min-w-0 flex flex-col justify-between h-full sm:min-h-[100px]">
+        <div className="flex justify-between items-start gap-2">
+          <div className="min-w-0">
+            <h3 className="text-base font-medium text-white leading-tight line-clamp-2 sm:h-10">{item.title}</h3>
+            {/* Mobile Author */}
+            <p className="text-xs text-zinc-500 truncate sm:hidden mt-1">{item.author}</p>
+          </div>
+          {/* Mobile Volume Badge */}
+          <div className="sm:hidden">
+            {item.category === 'manga' && item.totalVolumes && (
+              <span className="text-[9px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30 shrink-0">
+                Vol. {item.totalVolumes}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Desktop Footer / Bottom Row */}
+        <div className="flex items-center justify-between mt-auto pt-2">
+          <p className="text-xs text-zinc-500 truncate flex-1 mr-2 hidden sm:block">{item.author}</p>
+          
+          {/* Desktop Volume Badge */}
+          <div className="hidden sm:block">
+            {item.category === 'manga' && item.totalVolumes && (
+              <span className="text-[9px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30 shrink-0">
+                Vol. {item.totalVolumes}
+              </span>
+            )}
+          </div>
         </div>
         
         {item.totalPages && item.totalPages > 0 && (
@@ -220,31 +236,16 @@ const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit, onOpenDetails }: {
           </div>
         )}
       </div>
-
-      <div className="flex flex-col space-y-2 opacity-0 group-hover:opacity-100 transition-all">
-        <button 
-          onClick={() => onEdit(item)}
-          className="p-2 text-zinc-500 hover:text-white transition-all"
-        >
-          <Pencil className="w-5 h-5" />
-          <span className="sr-only">Edit</span>
-        </button>
-        <button 
-          onClick={() => onDelete(item.id)}
-          className="p-2 text-zinc-500 hover:text-red-500 transition-all"
-        >
-          <Trash2 className="w-5 h-5" />
-        </button>
-      </div>
     </motion.div>
   );
 };
 
-const ItemModal = ({ isOpen, onClose, onSave, initialData }: { 
+const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] }: { 
   isOpen: boolean; 
   onClose: () => void; 
   onSave: (data: any) => void;
   initialData?: LibraryItem | null;
+  existingAuthors?: string[];
 }) => {
   const [formData, setFormData] = useState({
     title: '',
@@ -350,9 +351,9 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
 
         <div className="space-y-4">
           <div className="flex space-x-4">
-            <div className="w-20 h-28 flex-shrink-0 bg-white/5 rounded-xl overflow-hidden border border-white/10">
+            <div className="w-20 h-28 flex-shrink-0 bg-zinc-800/50 rounded-xl overflow-hidden border border-white/10">
               {formData.coverUrl ? (
-                <img src={formData.coverUrl} className="w-full h-full object-cover" alt="Preview" referrerPolicy="no-referrer" />
+                <img src={formData.coverUrl} className="w-full h-full object-contain" alt="Preview" referrerPolicy="no-referrer" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-zinc-700">
                   <Book className="w-6 h-6" />
@@ -472,12 +473,20 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
 
           <div className="space-y-1">
             <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Author / Publisher</label>
-            <input 
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20"
-              placeholder="Author..."
-              value={formData.author}
-              onChange={e => setFormData({ ...formData, author: e.target.value })}
-            />
+            <div className="relative">
+              <input 
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20"
+                placeholder="Author..."
+                list="authors-list"
+                value={formData.author}
+                onChange={e => setFormData({ ...formData, author: e.target.value })}
+              />
+              <datalist id="authors-list">
+                {Array.from(new Set(existingAuthors)).sort().map(author => (
+                  <option key={author} value={author} />
+                ))}
+              </datalist>
+            </div>
           </div>
 
           <div className="grid grid-cols-3 gap-2">
@@ -729,12 +738,14 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
   );
 };
 
-const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages }: {
+const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, onEdit, onDelete }: {
   item: LibraryItem | null;
   isOpen: boolean;
   onClose: () => void;
   onUpdateStatus: (id: string, status: Status) => void;
   onUpdatePages: (id: string, pagesRead: number) => void;
+  onEdit: (item: LibraryItem) => void;
+  onDelete: (id: string) => void;
 }) => {
   if (!item || !isOpen) return null;
 
@@ -768,13 +779,33 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages }: 
             <h2 className="text-xl font-serif font-bold text-white leading-tight">{item.title}</h2>
             <p className="text-sm text-zinc-400">{item.author}</p>
           </div>
-          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+          <div className="flex items-center space-x-2">
+            <button 
+              onClick={() => {
+                onEdit(item);
+                onClose();
+              }} 
+              className="p-2 text-zinc-500 hover:text-white transition-all"
+            >
+              <Pencil className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => {
+                onDelete(item.id);
+                onClose();
+              }} 
+              className="p-2 text-zinc-500 hover:text-red-500 transition-all"
+            >
+              <Trash2 className="w-5 h-5" />
+            </button>
+            <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+          </div>
         </div>
 
         <div className="flex space-x-5">
-          <div className="w-24 h-36 flex-shrink-0 bg-white/5 rounded-xl overflow-hidden border border-white/10 shadow-lg">
+          <div className="w-24 h-36 flex-shrink-0 bg-zinc-800/50 rounded-xl overflow-hidden border border-white/10 shadow-lg">
             {item.coverUrl ? (
-              <img src={item.coverUrl} className="w-full h-full object-cover" alt={item.title} referrerPolicy="no-referrer" />
+              <img src={item.coverUrl} className="w-full h-full object-contain" alt={item.title} referrerPolicy="no-referrer" />
             ) : (
               <div className={cn("w-full h-full flex items-center justify-center", config.color)}>
                 <Icon className="w-10 h-10 opacity-20" />
@@ -1073,7 +1104,7 @@ export default function App() {
     <div className="min-h-screen pb-24">
       {/* Header */}
       <header className="relative sm:sticky sm:top-0 z-40 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-4">
-        <div className="max-w-2xl mx-auto space-y-4">
+        <div className="max-w-6xl mx-auto space-y-4">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-serif font-bold text-white">
               Nerd<span className="text-red-700">Shelf</span>
@@ -1140,24 +1171,20 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-4xl mx-auto">
+      <main className="max-w-6xl mx-auto">
         {view === 'library' ? (
-          <div className="max-w-2xl mx-auto p-6 space-y-4">
+          <div className="p-6">
             <AnimatePresence mode="popLayout">
               {filteredItems.length > 0 ? (
-                filteredItems.map(item => (
-                  <ItemCard 
-                    key={item.id} 
-                    item={item} 
-                    onDelete={handleDeleteItem}
-                    onUpdateStatus={handleUpdateStatus}
-                    onEdit={(item) => {
-                      setEditingItem(item);
-                      setIsModalOpen(true);
-                    }}
-                    onOpenDetails={(item) => setSelectedItemDetails(item)}
-                  />
-                ))
+                <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                  {filteredItems.map(item => (
+                    <ItemCard 
+                      key={item.id} 
+                      item={item} 
+                      onOpenDetails={(item) => setSelectedItemDetails(item)}
+                    />
+                  ))}
+                </div>
               ) : (
                 <motion.div 
                   initial={{ opacity: 0 }}
@@ -1228,6 +1255,7 @@ export default function App() {
         }} 
         onSave={handleSaveItem}
         initialData={editingItem}
+        existingAuthors={items.map(i => i.author).filter(Boolean)}
       />
 
       <DeleteConfirmationModal 
@@ -1242,6 +1270,11 @@ export default function App() {
         onClose={() => setSelectedItemDetails(null)}
         onUpdateStatus={handleUpdateStatus}
         onUpdatePages={handleUpdatePages}
+        onEdit={(item) => {
+          setEditingItem(item);
+          setIsModalOpen(true);
+        }}
+        onDelete={handleDeleteItem}
       />
     </div>
   );
