@@ -543,10 +543,10 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
             )}
             {formData.category === 'manga' && (
               <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-1">
-                <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Total Volumes</label>
+                <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Volume Number</label>
                 <input 
                   className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
-                  placeholder="e.g. 42"
+                  placeholder="e.g. 1"
                   value={formData.totalVolumes}
                   onChange={e => setFormData({ ...formData, totalVolumes: e.target.value })}
                 />
@@ -595,9 +595,41 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
   const stats = useMemo(() => {
     const total = filteredItems.length;
     const read = filteredItems.filter(i => i.status === 'read').length;
+    const reading = filteredItems.filter(i => i.status === 'reading').length;
+    const unread = filteredItems.filter(i => i.status === 'unread').length;
+    
     const value = filteredItems.reduce((acc, curr) => acc + (curr.price || 0), 0);
-    return { total, read, value };
+    const avgPrice = total > 0 ? value / total : 0;
+    
+    const totalPages = filteredItems.reduce((acc, curr) => acc + (Number(curr.totalPages) || 0), 0);
+    const pagesRead = filteredItems.reduce((acc, curr) => acc + (Number(curr.pagesRead) || 0), 0);
+    const progressPercent = totalPages > 0 ? (pagesRead / totalPages) * 100 : 0;
+    
+    const mangaCount = filteredItems.filter(i => i.category === 'manga').length;
+    
+    return { total, read, reading, unread, value, avgPrice, totalPages, pagesRead, progressPercent, mangaCount };
   }, [filteredItems]);
+
+  const genreData = useMemo(() => {
+    const counts: Record<string, number> = {};
+    filteredItems.forEach(item => {
+      if (item.genre) {
+        counts[item.genre] = (counts[item.genre] || 0) + 1;
+      }
+    });
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
+  }, [filteredItems]);
+
+  const statusData = useMemo(() => {
+    return [
+      { name: 'To Read', value: stats.unread, color: '#71717a' },
+      { name: 'Reading', value: stats.reading, color: '#60a5fa' },
+      { name: 'Finished', value: stats.read, color: '#22c55e' }
+    ];
+  }, [stats]);
 
   const categoryData = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -663,26 +695,59 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="glass-card p-6 rounded-3xl border-l-4 border-amber-600">
-          <p className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Total Items</p>
-          <p className="text-4xl font-serif font-bold text-white">{stats.total}</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div className="glass-card p-5 rounded-3xl border-l-4 border-amber-600">
+          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Total Items</p>
+          <p className="text-3xl font-serif font-bold text-white">{stats.total}</p>
         </div>
-        <div className="glass-card p-6 rounded-3xl border-l-4 border-green-600">
-          <p className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Finished</p>
-          <p className="text-4xl font-serif font-bold text-white">{stats.read}</p>
+        <div className="glass-card p-5 rounded-3xl border-l-4 border-green-600">
+          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Finished</p>
+          <p className="text-3xl font-serif font-bold text-white">{stats.read}</p>
         </div>
-        <div className="glass-card p-6 rounded-3xl border-l-4 border-blue-600">
-          <p className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Total Value</p>
-          <p className="text-4xl font-serif font-bold text-white">€{stats.value.toFixed(2)}</p>
+        <div className="glass-card p-5 rounded-3xl border-l-4 border-blue-600">
+          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Total Value</p>
+          <p className="text-3xl font-serif font-bold text-white">€{stats.value.toFixed(2)}</p>
+        </div>
+        <div className="glass-card p-5 rounded-3xl border-l-4 border-purple-600">
+          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Avg. Price</p>
+          <p className="text-3xl font-serif font-bold text-white">€{stats.avgPrice.toFixed(2)}</p>
+        </div>
+      </div>
+
+      {/* Reading Progress & Manga Count */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="glass-card p-6 rounded-3xl space-y-4">
+          <div className="flex justify-between items-end">
+            <div>
+              <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Reading Progress</p>
+              <p className="text-2xl font-serif font-bold text-white">{stats.pagesRead.toLocaleString()} <span className="text-sm text-zinc-500 font-sans">/ {stats.totalPages.toLocaleString()} pages</span></p>
+            </div>
+            <p className="text-2xl font-mono font-bold text-white">{Math.round(stats.progressPercent)}%</p>
+          </div>
+          <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
+            <motion.div 
+              initial={{ width: 0 }}
+              animate={{ width: `${stats.progressPercent}%` }}
+              className="h-full bg-gradient-to-r from-amber-600 to-orange-400"
+            />
+          </div>
+        </div>
+        <div className="glass-card p-6 rounded-3xl flex items-center justify-between">
+          <div>
+            <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Manga Collected</p>
+            <p className="text-4xl font-serif font-bold text-white">{stats.mangaCount}</p>
+          </div>
+          <div className="p-4 bg-purple-900/20 rounded-2xl">
+            <Sparkles className="w-8 h-8 text-purple-500" />
+          </div>
         </div>
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {visibleCharts.distribution && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[400px] flex flex-col">
-            <h3 className="text-sm font-bold text-zinc-400 mb-6 uppercase tracking-widest">Category Distribution</h3>
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col">
+            <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">Category Distribution</h3>
             <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -703,16 +768,36 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
                     contentStyle={{ backgroundColor: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
                     itemStyle={{ color: '#fff' }}
                   />
-                  <Legend verticalAlign="bottom" height={36}/>
                 </PieChart>
               </ResponsiveContainer>
             </div>
           </motion.div>
         )}
 
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col">
+          <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">Status Breakdown</h3>
+          <div className="flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={statusData} layout="vertical">
+                <XAxis type="number" hide />
+                <YAxis dataKey="name" type="category" stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} width={70} />
+                <Tooltip 
+                  cursor={{ fill: 'transparent' }}
+                  contentStyle={{ backgroundColor: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                  {statusData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </motion.div>
+
         {visibleCharts.value && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[400px] flex flex-col">
-            <h3 className="text-sm font-bold text-zinc-400 mb-6 uppercase tracking-widest">Value by Category (€)</h3>
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col">
+            <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">Value by Category</h3>
             <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={valueData}>
@@ -721,18 +806,57 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
                   <Tooltip 
                     cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                     contentStyle={{ backgroundColor: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
-                    itemStyle={{ color: '#fff' }}
                   />
-                  <Bar dataKey="value" radius={[10, 10, 0, 0]}>
-                    {valueData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Bar>
+                  <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </motion.div>
         )}
+
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col lg:col-span-2">
+          <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">Top Genres</h3>
+          <div className="flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={genreData}>
+                <XAxis dataKey="name" stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
+                <Tooltip 
+                  cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                  contentStyle={{ backgroundColor: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                />
+                <Bar dataKey="value" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col overflow-hidden">
+          <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest">Currently Reading</h3>
+          <div className="flex-1 overflow-y-auto no-scrollbar space-y-3">
+            {items.filter(i => i.status === 'reading').length > 0 ? (
+              items.filter(i => i.status === 'reading').map(item => (
+                <div key={item.id} className="flex items-center space-x-3 p-2 bg-white/5 rounded-xl border border-white/5">
+                  <div className="w-10 h-14 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
+                    {item.coverUrl && <img src={item.coverUrl} className="w-full h-full object-cover" alt="" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-white truncate">{item.title}</p>
+                    <p className="text-[10px] text-zinc-500 truncate">{item.author}</p>
+                    <div className="mt-1 w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-blue-500" 
+                        style={{ width: `${item.totalPages ? (Number(item.pagesRead) / Number(item.totalPages)) * 100 : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-zinc-600 text-center py-10 italic">Nothing on the desk right now.</p>
+            )}
+          </div>
+        </motion.div>
       </div>
     </div>
   );
@@ -897,7 +1021,7 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
           )}
           {item.totalVolumes && (
             <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">Volumes</label>
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">Volume</label>
               <p className="text-white text-xs">{item.totalVolumes}</p>
             </div>
           )}
