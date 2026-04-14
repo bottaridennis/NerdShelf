@@ -200,14 +200,9 @@ const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit }: {
         )}
       </div>
       
-      <div className="flex-1 min-w-0 py-1">
-        <div className="flex justify-between items-start">
-          <h3 className="text-lg font-medium text-white truncate leading-tight">{item.title}</h3>
-          {item.price !== undefined && (
-            <span className="text-xs font-mono text-zinc-400 ml-2">€{item.price.toFixed(2)}</span>
-          )}
-        </div>
-        <p className="text-sm text-zinc-500 truncate">{item.author || 'Unknown Author'}</p>
+      <div className="flex-1 min-w-0 py-1 flex flex-col h-full">
+        <h3 className="text-lg font-medium text-white leading-tight break-words">{item.title}</h3>
+        <p className="text-sm text-zinc-500 break-words">{item.author || 'Unknown Author'}</p>
         
         <div className="flex items-center mt-2 space-x-3">
           <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-600">{config.label}</span>
@@ -230,11 +225,14 @@ const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit }: {
           </button>
         </div>
 
-        {/* Conditional Badges */}
-        <div className="flex flex-wrap gap-2 mt-3">
+        {/* Conditional Badges & Price */}
+        <div className="flex flex-wrap items-center gap-2 mt-auto pt-3">
           {item.isbn && <span className="text-[9px] px-2 py-0.5 bg-white/5 rounded-md text-zinc-500 border border-white/5">ISBN: {item.isbn}</span>}
           {item.totalVolumes && <span className="text-[9px] px-2 py-0.5 bg-white/5 rounded-md text-zinc-500 border border-white/5">{item.totalVolumes} Vol.</span>}
           {item.system && <span className="text-[9px] px-2 py-0.5 bg-white/5 rounded-md text-zinc-500 border border-white/5">System: {item.system}</span>}
+          {item.price !== undefined && (
+            <span className="text-xs font-mono text-zinc-400 ml-auto">€{item.price.toFixed(2)}</span>
+          )}
         </div>
       </div>
 
@@ -697,6 +695,43 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
   );
 };
 
+const DeleteConfirmationModal = ({ isOpen, onConfirm, onCancel }: { 
+  isOpen: boolean; 
+  onConfirm: () => void; 
+  onCancel: () => void;
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-zinc-900 border border-white/10 p-6 rounded-3xl max-w-sm w-full space-y-6 shadow-2xl"
+      >
+        <div className="space-y-2 text-center">
+          <h3 className="text-xl font-bold text-white">Sei sicuro?</h3>
+          <p className="text-zinc-400 text-sm">Vuoi davvero eliminare questo elemento dalla tua libreria? L'azione è irreversibile.</p>
+        </div>
+        <div className="flex space-x-3">
+          <button 
+            onClick={onCancel}
+            className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all"
+          >
+            Annulla
+          </button>
+          <button 
+            onClick={onConfirm}
+            className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-2xl transition-all shadow-lg shadow-red-900/20"
+          >
+            Sì, elimina
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -711,6 +746,7 @@ export default function App() {
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem('nerdshelf_sort', sortBy);
@@ -803,9 +839,14 @@ export default function App() {
   };
 
   const handleDeleteItem = async (id: string) => {
-    if (!confirm("Are you sure you want to remove this from your library?")) return;
+    setItemToDelete(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
     try {
-      await deleteDoc(doc(db, 'libraryItems', id));
+      await deleteDoc(doc(db, 'libraryItems', itemToDelete));
+      setItemToDelete(null);
     } catch (error) {
       console.error("Error deleting item:", error);
     }
@@ -935,6 +976,20 @@ export default function App() {
           <Book className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase tracking-widest">Library</span>
         </button>
+        
+        <button 
+          onClick={() => {
+            setEditingItem(null);
+            setIsModalOpen(true);
+          }}
+          className="flex flex-col items-center -mt-8"
+        >
+          <div className="w-14 h-14 bg-white text-black rounded-full shadow-2xl flex items-center justify-center border-4 border-black">
+            <Plus className="w-7 h-7" />
+          </div>
+          <span className="text-[10px] font-bold uppercase tracking-widest mt-1 text-white">Add</span>
+        </button>
+
         <button 
           onClick={() => setView('dashboard')}
           className={cn("flex flex-col items-center space-y-1", view === 'dashboard' ? "text-white" : "text-zinc-600")}
@@ -944,13 +999,13 @@ export default function App() {
         </button>
       </div>
 
-      {/* FAB */}
+      {/* FAB (Desktop Only) */}
       <button 
         onClick={() => {
           setEditingItem(null);
           setIsModalOpen(true);
         }}
-        className="fixed bottom-8 right-8 w-16 h-16 bg-white text-black rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all z-50"
+        className="hidden sm:flex fixed bottom-8 right-8 w-16 h-16 bg-white text-black rounded-full shadow-2xl items-center justify-center hover:scale-110 active:scale-95 transition-all z-50"
       >
         <Plus className="w-8 h-8" />
       </button>
@@ -963,6 +1018,12 @@ export default function App() {
         }} 
         onSave={handleSaveItem}
         initialData={editingItem}
+      />
+
+      <DeleteConfirmationModal 
+        isOpen={!!itemToDelete}
+        onConfirm={confirmDelete}
+        onCancel={() => setItemToDelete(null)}
       />
     </div>
   );
