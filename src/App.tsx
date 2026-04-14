@@ -79,6 +79,8 @@ interface LibraryItem {
   isbn?: string;
   totalVolumes?: string;
   system?: string;
+  totalPages?: number;
+  pagesRead?: number;
   coverUrl?: string;
   createdAt: any;
 }
@@ -153,11 +155,12 @@ const CategoryChip = ({
   </button>
 );
 
-const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit }: { 
+const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit, onOpenDetails }: { 
   item: LibraryItem; 
   onDelete: (id: string) => void;
   onUpdateStatus: (id: string, status: Status) => void;
   onEdit: (item: LibraryItem) => void;
+  onOpenDetails: (item: LibraryItem) => void;
   key?: string;
 }) => {
   const categoryConfig = {
@@ -166,16 +169,8 @@ const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit }: {
     gdr: { icon: Sword, color: 'text-red-700', border: 'category-gdr', label: 'RPG' }
   };
 
-  const statusConfig = {
-    unread: { icon: Clock, label: 'To Read', color: 'text-zinc-500' },
-    reading: { icon: BookOpen, label: 'Reading', color: 'text-blue-400' },
-    read: { icon: CheckCircle2, label: 'Finished', color: 'text-green-500' }
-  };
-
   const config = categoryConfig[item.category];
-  const status = statusConfig[item.status];
   const Icon = config.icon;
-  const StatusIcon = status.icon;
 
   return (
     <motion.div 
@@ -183,9 +178,12 @@ const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit }: {
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className={cn("glass-card p-4 rounded-2xl flex items-start space-x-4 group relative overflow-hidden", config.border)}
+      className={cn("glass-card p-4 rounded-2xl flex items-center space-x-4 group relative overflow-hidden", config.border)}
     >
-      <div className="w-20 h-28 flex-shrink-0 bg-white/5 rounded-lg overflow-hidden relative">
+      <button 
+        onClick={() => onOpenDetails(item)}
+        className="w-20 h-28 flex-shrink-0 bg-white/5 rounded-lg overflow-hidden relative hover:scale-105 transition-transform active:scale-95"
+      >
         {item.coverUrl ? (
           <img 
             src={item.coverUrl} 
@@ -198,42 +196,29 @@ const ItemCard = ({ item, onDelete, onUpdateStatus, onEdit }: {
             <Icon className="w-8 h-8 opacity-20" />
           </div>
         )}
-      </div>
+      </button>
       
-      <div className="flex-1 min-w-0 py-1 flex flex-col h-full">
+      <div className="flex-1 min-w-0 py-2 flex flex-col justify-center">
         <h3 className="text-lg font-medium text-white leading-tight break-words">{item.title}</h3>
-        <p className="text-sm text-zinc-500 break-words">{item.author || 'Unknown Author'}</p>
+        <div className="flex items-center space-x-2 mt-0.5">
+          {item.author && (
+            <p className="text-sm text-zinc-500 break-words">{item.author}</p>
+          )}
+          {item.category === 'manga' && item.totalVolumes && (
+            <span className="text-[10px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30">
+              Vol. {item.totalVolumes}
+            </span>
+          )}
+        </div>
         
-        <div className="flex items-center mt-2 space-x-3">
-          <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-600">{config.label}</span>
-          {item.genre && (
-            <>
-              <div className="w-1 h-1 rounded-full bg-zinc-800" />
-              <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500">{item.genre}</span>
-            </>
-          )}
-          <div className="w-1 h-1 rounded-full bg-zinc-800" />
-          <button 
-            onClick={() => {
-              const next: Record<Status, Status> = { unread: 'reading', reading: 'read', read: 'unread' };
-              onUpdateStatus(item.id, next[item.status]);
-            }}
-            className={cn("flex items-center space-x-1 text-xs font-medium", status.color)}
-          >
-            <StatusIcon className="w-3 h-3" />
-            <span>{status.label}</span>
-          </button>
-        </div>
-
-        {/* Conditional Badges & Price */}
-        <div className="flex flex-wrap items-center gap-2 mt-auto pt-3">
-          {item.isbn && <span className="text-[9px] px-2 py-0.5 bg-white/5 rounded-md text-zinc-500 border border-white/5">ISBN: {item.isbn}</span>}
-          {item.totalVolumes && <span className="text-[9px] px-2 py-0.5 bg-white/5 rounded-md text-zinc-500 border border-white/5">{item.totalVolumes} Vol.</span>}
-          {item.system && <span className="text-[9px] px-2 py-0.5 bg-white/5 rounded-md text-zinc-500 border border-white/5">System: {item.system}</span>}
-          {item.price !== undefined && (
-            <span className="text-xs font-mono text-zinc-400 ml-auto">€{item.price.toFixed(2)}</span>
-          )}
-        </div>
+        {item.totalPages && item.totalPages > 0 && (
+          <div className="mt-3 w-full bg-white/5 h-1 rounded-full overflow-hidden">
+            <div 
+              className="h-full bg-white/20 transition-all" 
+              style={{ width: `${Math.min(100, ((item.pagesRead || 0) / item.totalPages) * 100)}%` }}
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col space-y-2 opacity-0 group-hover:opacity-100 transition-all">
@@ -271,6 +256,8 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
     isbn: '',
     totalVolumes: '',
     system: '',
+    totalPages: '' as string | number,
+    pagesRead: '' as string | number,
     coverUrl: ''
   });
 
@@ -289,6 +276,8 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
         isbn: initialData.isbn || '',
         totalVolumes: initialData.totalVolumes || '',
         system: initialData.system || '',
+        totalPages: initialData.totalPages ?? '',
+        pagesRead: initialData.pagesRead ?? '',
         coverUrl: initialData.coverUrl || ''
       });
     } else {
@@ -302,6 +291,8 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
         isbn: '',
         totalVolumes: '',
         system: '',
+        totalPages: '',
+        pagesRead: '',
         coverUrl: ''
       });
     }
@@ -348,31 +339,31 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
       <motion.div 
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
-        className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-t-[2.5rem] sm:rounded-[2.5rem] p-8 space-y-6 max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl"
+        className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-t-[2rem] sm:rounded-[2rem] p-6 space-y-5 max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl"
       >
         <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-serif font-bold text-white">
+          <h2 className="text-xl font-serif font-bold text-white">
             {initialData ? 'Edit Treasure' : 'New Treasure'}
           </h2>
-          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X /></button>
+          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
         </div>
 
         <div className="space-y-4">
           <div className="flex space-x-4">
-            <div className="w-24 h-36 flex-shrink-0 bg-white/5 rounded-xl overflow-hidden border border-white/10">
+            <div className="w-20 h-28 flex-shrink-0 bg-white/5 rounded-xl overflow-hidden border border-white/10">
               {formData.coverUrl ? (
                 <img src={formData.coverUrl} className="w-full h-full object-cover" alt="Preview" referrerPolicy="no-referrer" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-zinc-700">
-                  <Book className="w-8 h-8" />
+                  <Book className="w-6 h-6" />
                 </div>
               )}
             </div>
-            <div className="flex-1 space-y-3">
+            <div className="flex-1 space-y-2">
               <div className="space-y-1">
-                <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Title</label>
+                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Title</label>
                 <input 
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
                   placeholder="Title..."
                   value={formData.title}
                   onChange={e => setFormData({ ...formData, title: e.target.value })}
@@ -381,7 +372,7 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
               <button 
                 onClick={searchCovers}
                 disabled={!formData.title || isSearching}
-                className="text-xs font-bold text-blue-400 hover:text-blue-300 transition-colors flex items-center space-x-1"
+                className="text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors flex items-center space-x-1"
               >
                 <Search className="w-3 h-3" />
                 <span>{isSearching ? 'Searching...' : 'Search Covers'}</span>
@@ -391,7 +382,7 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
 
           {coverResults.length > 0 && (
             <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Select Cover</label>
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Select Cover</label>
               <div className="cover-grid">
                 {coverResults.map((url, i) => (
                   <button 
@@ -409,36 +400,70 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Purchase Cost (€)</label>
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Pages Read</label>
               <input 
                 type="number"
-                step="0.01"
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
-                placeholder="0.00"
-                value={formData.price}
-                onChange={e => setFormData({ ...formData, price: e.target.value === '' ? '' : parseFloat(e.target.value) })}
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+                placeholder="0"
+                value={formData.pagesRead}
+                onChange={e => setFormData({ ...formData, pagesRead: e.target.value === '' ? '' : parseInt(e.target.value) })}
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Status</label>
-              <select 
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
-                value={formData.status}
-                onChange={e => setFormData({ ...formData, status: e.target.value as Status })}
-              >
-                <option value="unread" className="bg-zinc-900">To Read</option>
-                <option value="reading" className="bg-zinc-900">Reading</option>
-                <option value="read" className="bg-zinc-900">Finished</option>
-              </select>
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Total Pages</label>
+              <input 
+                type="number"
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+                placeholder="0"
+                value={formData.totalPages}
+                onChange={e => setFormData({ ...formData, totalPages: e.target.value === '' ? '' : parseInt(e.target.value) })}
+              />
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Cover URL (Manual Fallback)</label>
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Purchase Cost (€)</label>
             <input 
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+              type="number"
+              step="0.01"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+              placeholder="0.00"
+              value={formData.price}
+              onChange={e => setFormData({ ...formData, price: e.target.value === '' ? '' : parseFloat(e.target.value) })}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Status</label>
+            <div className="flex gap-2">
+              {[
+                { id: 'unread', label: 'To Read' },
+                { id: 'reading', label: 'Reading' },
+                { id: 'read', label: 'Finished' }
+              ].map(s => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setFormData({ ...formData, status: s.id as Status })}
+                  className={cn(
+                    "flex-1 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-all",
+                    formData.status === s.id 
+                      ? "bg-white text-black border-white" 
+                      : "bg-white/5 border-white/5 text-zinc-500 hover:bg-white/10"
+                  )}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Cover URL (Manual Fallback)</label>
+            <input 
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
               placeholder="Paste image URL here..."
               value={formData.coverUrl}
               onChange={e => setFormData({ ...formData, coverUrl: e.target.value })}
@@ -446,22 +471,22 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Author / Publisher</label>
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Author / Publisher</label>
             <input 
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20"
               placeholder="Author..."
               value={formData.author}
               onChange={e => setFormData({ ...formData, author: e.target.value })}
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-2">
             {(['book', 'manga', 'gdr'] as Category[]).map(cat => (
               <button
                 key={cat}
                 onClick={() => setFormData({ ...formData, category: cat })}
                 className={cn(
-                  "p-3 rounded-xl border transition-all text-[10px] font-bold uppercase tracking-widest",
+                  "p-2.5 rounded-xl border transition-all text-[9px] font-bold uppercase tracking-widest",
                   formData.category === cat 
                     ? (cat === 'gdr' ? 'bg-red-900/40 border-red-700 text-red-400' : cat === 'manga' ? 'bg-purple-900/40 border-purple-700 text-purple-400' : 'bg-amber-900/40 border-amber-700 text-amber-400')
                     : "bg-white/5 border-white/10 text-zinc-500"
@@ -476,25 +501,25 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData }: {
           <AnimatePresence mode="wait">
             {formData.category === 'book' && (
               <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-4">
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Type / Genre</label>
-                  <select 
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
-                    value={formData.genre}
-                    onChange={e => setFormData({ ...formData, genre: e.target.value })}
-                  >
-                    <option value="">Select Genre...</option>
-                    <option value="Horror">Horror</option>
-                    <option value="Poetry">Poetry</option>
-                    <option value="Cookbook">Cookbook</option>
-                    <option value="Novel">Novel</option>
-                    <option value="Thriller">Thriller</option>
-                    <option value="Fantasy">Fantasy</option>
-                    <option value="Sci-Fi">Sci-Fi</option>
-                    <option value="Biography">Biography</option>
-                    <option value="History">History</option>
-                    <option value="Other">Other</option>
-                  </select>
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Select Genre</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {["Horror", "Poetry", "Cookbook", "Novel", "Thriller", "Fantasy", "Sci-Fi", "Biography", "History", "Other"].map(g => (
+                      <button
+                        key={g}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, genre: g })}
+                        className={cn(
+                          "px-3 py-2 rounded-xl text-xs font-medium border transition-all text-left",
+                          formData.genre === g 
+                            ? "bg-white text-black border-white" 
+                            : "bg-white/5 border-white/5 text-zinc-400 hover:bg-white/10"
+                        )}
+                      >
+                        {g}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">ISBN</label>
@@ -590,16 +615,25 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-3xl font-serif font-bold text-white">Dashboard</h2>
         <div className="flex items-center space-x-3">
-          <select 
-            value={filter}
-            onChange={e => setFilter(e.target.value as any)}
-            className="bg-white/5 border border-white/10 text-xs font-bold uppercase tracking-widest text-zinc-400 rounded-xl px-4 py-2 focus:outline-none"
-          >
-            <option value="all" className="bg-zinc-900">All Categories</option>
-            <option value="book" className="bg-zinc-900">Books Only</option>
-            <option value="manga" className="bg-zinc-900">Manga Only</option>
-            <option value="gdr" className="bg-zinc-900">RPG Only</option>
-          </select>
+          <div className="flex bg-white/5 p-1 rounded-xl border border-white/5">
+            {[
+              { id: 'all', label: 'All' },
+              { id: 'book', label: 'Books' },
+              { id: 'manga', label: 'Manga' },
+              { id: 'gdr', label: 'RPG' }
+            ].map(f => (
+              <button
+                key={f.id}
+                onClick={() => setFilter(f.id as any)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                  filter === f.id ? "bg-white text-black" : "text-zinc-500 hover:text-white"
+                )}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
           <div className="relative group">
             <button className="p-2 bg-white/5 border border-white/10 rounded-xl text-zinc-400 hover:text-white transition-all">
               <Filter className="w-5 h-5" />
@@ -695,6 +729,159 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
   );
 };
 
+const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages }: {
+  item: LibraryItem | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onUpdateStatus: (id: string, status: Status) => void;
+  onUpdatePages: (id: string, pagesRead: number) => void;
+}) => {
+  if (!item || !isOpen) return null;
+
+  const categoryConfig = {
+    book: { icon: Book, color: 'text-amber-600', label: 'Classic' },
+    manga: { icon: Sparkles, color: 'text-purple-600', label: 'Manga' },
+    gdr: { icon: Sword, color: 'text-red-700', label: 'RPG' }
+  };
+
+  const statusConfig = {
+    unread: { icon: Clock, label: 'To Read', color: 'text-zinc-500' },
+    reading: { icon: BookOpen, label: 'Reading', color: 'text-blue-400' },
+    read: { icon: CheckCircle2, label: 'Finished', color: 'text-green-500' }
+  };
+
+  const config = categoryConfig[item.category];
+  const status = statusConfig[item.status];
+  const Icon = config.icon;
+  const progress = item.totalPages ? Math.min(100, ((item.pagesRead || 0) / item.totalPages) * 100) : 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+      <motion.div 
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-t-[2rem] sm:rounded-[2rem] p-6 space-y-5 max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl"
+      >
+        <div className="flex justify-between items-start">
+          <div className="space-y-0.5">
+            <span className={cn("text-[9px] uppercase tracking-widest font-bold", config.color)}>{config.label}</span>
+            <h2 className="text-xl font-serif font-bold text-white leading-tight">{item.title}</h2>
+            <p className="text-sm text-zinc-400">{item.author}</p>
+          </div>
+          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="flex space-x-5">
+          <div className="w-24 h-36 flex-shrink-0 bg-white/5 rounded-xl overflow-hidden border border-white/10 shadow-lg">
+            {item.coverUrl ? (
+              <img src={item.coverUrl} className="w-full h-full object-cover" alt={item.title} referrerPolicy="no-referrer" />
+            ) : (
+              <div className={cn("w-full h-full flex items-center justify-center", config.color)}>
+                <Icon className="w-10 h-10 opacity-20" />
+              </div>
+            )}
+          </div>
+          <div className="flex-1 space-y-4">
+            <div className="space-y-2">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Status</label>
+              <div className="flex flex-wrap gap-1.5">
+                {(['unread', 'reading', 'read'] as Status[]).map(s => (
+                  <button
+                    key={s}
+                    onClick={() => onUpdateStatus(item.id, s)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-widest border transition-all",
+                      item.status === s ? "bg-white text-black border-white" : "bg-white/5 text-zinc-500 border-white/5 hover:bg-white/10"
+                    )}
+                  >
+                    {statusConfig[s].label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {item.price !== undefined && (
+              <div className="space-y-0.5">
+                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Value</label>
+                <p className="text-lg font-mono text-white">€{item.price.toFixed(2)}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Progress Section */}
+        <div className="glass-card p-5 rounded-3xl space-y-3">
+          <div className="flex justify-between items-center">
+            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Reading Progress</label>
+            <p className="text-xs font-mono text-zinc-400">
+              <span className="text-white font-bold">{item.pagesRead || 0}</span> / {item.totalPages || '?'} <span className="ml-1 text-[10px] opacity-50">({Math.round(progress)}%)</span>
+            </p>
+          </div>
+          
+          <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+            <motion.div 
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              className="h-full bg-white transition-all" 
+            />
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button 
+              onClick={() => onUpdatePages(item.id, Math.max(0, (item.pagesRead || 0) - 10))}
+              className="w-8 h-8 flex items-center justify-center bg-white/5 rounded-lg text-xs text-white hover:bg-white/10 active:scale-90 transition-all shrink-0"
+            >
+              -10
+            </button>
+            <input 
+              type="range"
+              min="0"
+              max={item.totalPages || 1000}
+              value={item.pagesRead || 0}
+              onChange={(e) => onUpdatePages(item.id, parseInt(e.target.value))}
+              className="flex-1 h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
+            />
+            <button 
+              onClick={() => onUpdatePages(item.id, Math.min(item.totalPages || 1000, (item.pagesRead || 0) + 10))}
+              className="w-8 h-8 flex items-center justify-center bg-white/5 rounded-lg text-xs text-white hover:bg-white/10 active:scale-90 transition-all shrink-0"
+            >
+              +10
+            </button>
+          </div>
+        </div>
+
+        {/* Info Grid */}
+        <div className="grid grid-cols-2 gap-3">
+          {item.genre && (
+            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">Genre</label>
+              <p className="text-white text-xs">{item.genre}</p>
+            </div>
+          )}
+          {item.isbn && (
+            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">ISBN</label>
+              <p className="text-white text-xs font-mono">{item.isbn}</p>
+            </div>
+          )}
+          {item.totalVolumes && (
+            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">Volumes</label>
+              <p className="text-white text-xs">{item.totalVolumes}</p>
+            </div>
+          )}
+          {item.system && (
+            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">System</label>
+              <p className="text-white text-xs">{item.system}</p>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 const DeleteConfirmationModal = ({ isOpen, onConfirm, onCancel }: { 
   isOpen: boolean; 
   onConfirm: () => void; 
@@ -746,6 +933,7 @@ export default function App() {
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
+  const [selectedItemDetails, setSelectedItemDetails] = useState<LibraryItem | null>(null);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
 
   useEffect(() => {
@@ -815,12 +1003,19 @@ export default function App() {
 
   const handleSaveItem = async (data: any) => {
     if (!user) return;
+    
+    // Clean numeric fields: remove empty strings to satisfy Firestore rules
+    const cleanData = { ...data };
+    if (cleanData.price === '') delete cleanData.price;
+    if (cleanData.totalPages === '') delete cleanData.totalPages;
+    if (cleanData.pagesRead === '') delete cleanData.pagesRead;
+
     try {
       if (editingItem) {
-        await updateDoc(doc(db, 'libraryItems', editingItem.id), data);
+        await updateDoc(doc(db, 'libraryItems', editingItem.id), cleanData);
       } else {
         await addDoc(collection(db, 'libraryItems'), {
-          ...data,
+          ...cleanData,
           userId: user.uid,
           createdAt: serverTimestamp()
         });
@@ -833,8 +1028,22 @@ export default function App() {
   const handleUpdateStatus = async (id: string, status: Status) => {
     try {
       await updateDoc(doc(db, 'libraryItems', id), { status });
+      if (selectedItemDetails?.id === id) {
+        setSelectedItemDetails(prev => prev ? { ...prev, status } : null);
+      }
     } catch (error) {
       console.error("Error updating status:", error);
+    }
+  };
+
+  const handleUpdatePages = async (id: string, pagesRead: number) => {
+    try {
+      await updateDoc(doc(db, 'libraryItems', id), { pagesRead });
+      if (selectedItemDetails?.id === id) {
+        setSelectedItemDetails(prev => prev ? { ...prev, pagesRead } : null);
+      }
+    } catch (error) {
+      console.error("Error updating pages:", error);
     }
   };
 
@@ -863,7 +1072,7 @@ export default function App() {
   return (
     <div className="min-h-screen pb-24">
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-4">
+      <header className="relative sm:sticky sm:top-0 z-40 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-4">
         <div className="max-w-2xl mx-auto space-y-4">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-serif font-bold text-white">
@@ -946,6 +1155,7 @@ export default function App() {
                       setEditingItem(item);
                       setIsModalOpen(true);
                     }}
+                    onOpenDetails={(item) => setSelectedItemDetails(item)}
                   />
                 ))
               ) : (
@@ -968,7 +1178,7 @@ export default function App() {
       </main>
 
       {/* Mobile Nav */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-black/80 backdrop-blur-xl border-t border-white/5 px-6 py-4 flex justify-around items-center z-40">
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-white/5 px-6 py-4 flex justify-around items-center z-40">
         <button 
           onClick={() => setView('library')}
           className={cn("flex flex-col items-center space-y-1", view === 'library' ? "text-white" : "text-zinc-600")}
@@ -1024,6 +1234,14 @@ export default function App() {
         isOpen={!!itemToDelete}
         onConfirm={confirmDelete}
         onCancel={() => setItemToDelete(null)}
+      />
+
+      <DetailsModal 
+        item={selectedItemDetails}
+        isOpen={!!selectedItemDetails}
+        onClose={() => setSelectedItemDetails(null)}
+        onUpdateStatus={handleUpdateStatus}
+        onUpdatePages={handleUpdatePages}
       />
     </div>
   );
