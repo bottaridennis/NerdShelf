@@ -25,7 +25,6 @@ import {
   getDocFromServer
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
-import logo from './logo.png';
 import { 
   Book, 
   Sword, 
@@ -103,19 +102,13 @@ const AuthScreen = () => {
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="text-center space-y-12 max-w-md w-full"
+        className="text-center space-y-8 max-w-md w-full"
       >
-        <div className="flex flex-col items-center space-y-8">
-          <div className="relative group">
-            <div className="absolute inset-0 bg-red-700/30 blur-3xl rounded-full group-hover:bg-red-700/40 transition-colors" />
-            <img src={logo} className="w-40 h-40 object-contain relative z-10 drop-shadow-[0_0_25px_rgba(185,28,28,0.4)]" alt="NerdShelf Logo" />
-          </div>
-          <div className="space-y-3">
-            <h1 className="text-6xl font-serif font-bold text-white tracking-tighter">
-              Nerd<span className="text-red-700">Shelf</span>
-            </h1>
-            <p className="text-zinc-400 text-lg font-light max-w-[280px] mx-auto">Your personal sanctuary for classics, manga, and epic quests.</p>
-          </div>
+        <div className="space-y-2">
+          <h1 className="text-6xl font-serif font-bold text-white tracking-tighter">
+            Nerd<span className="text-red-700">Shelf</span>
+          </h1>
+          <p className="text-zinc-400 text-lg font-light">Your personal sanctuary for classics, manga, and epic quests.</p>
         </div>
 
         <div className="glass-card p-8 rounded-3xl space-y-6">
@@ -1237,15 +1230,9 @@ export default function App() {
       <header className="relative sm:sticky sm:top-0 z-40 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-4">
         <div className="max-w-6xl mx-auto space-y-4">
           <div className="flex justify-between items-center">
-            <div className="flex items-center gap-4 group cursor-pointer" onClick={() => setView('library')}>
-              <div className="relative">
-                <div className="absolute inset-0 bg-red-700/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-                <img src={logo} className="w-10 h-10 object-contain relative z-10 transition-transform group-hover:scale-110" alt="Logo" />
-              </div>
-              <h1 className="text-2xl font-serif font-bold text-white">
-                Nerd<span className="text-red-700">Shelf</span>
-              </h1>
-            </div>
+            <h1 className="text-2xl font-serif font-bold text-white">
+              Nerd<span className="text-red-700">Shelf</span>
+            </h1>
             <div className="flex items-center space-x-4">
               <nav className="hidden sm:flex items-center space-x-1 bg-white/5 p-1 rounded-xl border border-white/5">
                 <button 
@@ -1358,9 +1345,8 @@ export default function App() {
           }}
           className="flex flex-col items-center -mt-8"
         >
-          <div className="w-16 h-16 bg-white text-black rounded-full shadow-2xl flex items-center justify-center border-4 border-black relative overflow-hidden group">
-            <img src={logo} className="absolute inset-0 w-full h-full object-cover opacity-10 group-active:scale-110 transition-transform" alt="" />
-            <Plus className="w-8 h-8 relative z-10" />
+          <div className="w-14 h-14 bg-white text-black rounded-full shadow-2xl flex items-center justify-center border-4 border-black">
+            <Plus className="w-7 h-7" />
           </div>
           <span className="text-[10px] font-bold uppercase tracking-widest mt-1 text-white">Add</span>
         </button>
