@@ -104,7 +104,8 @@ const AuthScreen = () => {
         animate={{ opacity: 1, y: 0 }}
         className="text-center space-y-8 max-w-md w-full"
       >
-        <div className="space-y-2">
+        <div className="space-y-4 flex flex-col items-center">
+          <img src="logo.png" className="w-24 h-24 object-contain" alt="NerdShelf Logo" />
           <h1 className="text-6xl font-serif font-bold text-white tracking-tighter">
             Nerd<span className="text-red-700">Shelf</span>
           </h1>
@@ -1230,9 +1231,12 @@ export default function App() {
       <header className="relative sm:sticky sm:top-0 z-40 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-4">
         <div className="max-w-6xl mx-auto space-y-4">
           <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-serif font-bold text-white">
-              Nerd<span className="text-red-700">Shelf</span>
-            </h1>
+            <div className="flex items-center space-x-3">
+              <img src="logo.png" className="w-8 h-8 object-contain" alt="Logo" />
+              <h1 className="text-2xl font-serif font-bold text-white">
+                Nerd<span className="text-red-700">Shelf</span>
+              </h1>
+            </div>
             <div className="flex items-center space-x-4">
               <nav className="hidden sm:flex items-center space-x-1 bg-white/5 p-1 rounded-xl border border-white/5">
                 <button 
