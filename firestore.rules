@@ -28,6 +28,17 @@ service cloud.firestore {
     //   - loanDate: timestamp (optional)
     //   - createdAt: timestamp (required, immutable)
     //
+    // Collection: coverRegistry
+    // Document ID: {coverId}
+    // Fields:
+    //   - title: string (required, normalized lowercase)
+    //   - originalTitle: string (optional)
+    //   - coverUrl: string (required)
+    //   - author: string (optional)
+    //   - category: string (required, enum: ['book', 'manga', 'gdr'])
+    //   - useCount: number (required)
+    //   - lastUsed: timestamp (required)
+    //
     // ===============================================================
 
     // ===============================================================
@@ -65,6 +76,15 @@ service cloud.firestore {
              data.createdAt is timestamp;
     }
 
+    function isValidCoverRegistry(data) {
+      return data.keys().hasAll(['title', 'coverUrl', 'category', 'useCount', 'lastUsed']) &&
+             data.title is string &&
+             data.coverUrl is string &&
+             data.category in ['book', 'manga', 'gdr'] &&
+             data.useCount is number &&
+             data.lastUsed is timestamp;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -88,6 +108,14 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read, write: if isOwner(userId);
+    }
+
+    match /coverRegistry/{coverId} {
+      // Anyone authenticated can read covers
+      allow read: if isAuthenticated();
+      
+      // Anyone authenticated can create/update covers if valid
+      allow create, update: if isAuthenticated() && isValidCoverRegistry(request.resource.data);
     }
   }
 }
