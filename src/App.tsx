@@ -26,6 +26,7 @@ import {
   deleteField
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
+import { searchOpenLibrary, searchAniList, searchMangaDex, type CoverResult } from './services/apiService';
 import { 
   Book, 
   Sword, 
@@ -462,11 +463,33 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
     loanDate: null as any
   });
 
-  const [coverResults, setCoverResults] = useState<string[]>([]);
+  const [coverResults, setCoverResults] = useState<CoverResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [isBulkMode, setIsBulkMode] = useState(false);
   const [bulkRange, setBulkRange] = useState({ start: 1, end: 1 });
+
+  const searchCovers = async () => {
+    if (!formData.title) return;
+    setIsSearching(true);
+    try {
+      let results: CoverResult[] = [];
+      if (formData.category === 'manga') {
+        const [aniList, mangaDex] = await Promise.all([
+          searchAniList(formData.title),
+          searchMangaDex(formData.title)
+        ]);
+        results = [...aniList, ...mangaDex];
+      } else {
+        results = await searchOpenLibrary(formData.title);
+      }
+      setCoverResults(results);
+    } catch (error) {
+      console.error("Cover search failed:", error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
   useEffect(() => {
     if (initialData) {
@@ -528,40 +551,6 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
       }
     } catch (error) {
       console.error("Metadata fetch failed:", error);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const searchCovers = async () => {
-    if (!formData.title) return;
-    setIsSearching(true);
-    try {
-      // @ts-ignore
-      const apiKey = import.meta.env.VITE_GOOGLE_SEARCH_API_KEY;
-      // @ts-ignore
-      const cx = import.meta.env.VITE_GOOGLE_SEARCH_CX;
-      
-      if (!apiKey || !cx) {
-        // Fallback to Google Books if keys are missing
-        const response = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(formData.title)}&maxResults=6`);
-        const data = await response.json();
-        const covers = data.items
-          ?.map((item: any) => item.volumeInfo.imageLinks?.thumbnail)
-          .filter(Boolean)
-          .map((url: string) => url.replace('http:', 'https:')) || [];
-        setCoverResults(covers);
-        return;
-      }
-
-      const response = await fetch(
-        `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(formData.title + ' book cover')}&searchType=image&num=6`
-      );
-      const data = await response.json();
-      const covers = data.items?.map((item: any) => item.link) || [];
-      setCoverResults(covers);
-    } catch (error) {
-      console.error("Cover search failed:", error);
     } finally {
       setIsSearching(false);
     }
@@ -676,17 +665,20 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
           {coverResults.length > 0 && (
             <div className="space-y-2">
               <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Select Cover</label>
-              <div className="cover-grid">
-                {coverResults.map((url, i) => (
+              <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                {coverResults.map((res, i) => (
                   <button 
                     key={i}
                     onClick={() => {
-                      setFormData({ ...formData, coverUrl: url });
+                      setFormData({ ...formData, coverUrl: res.coverUrl, author: res.author || formData.author });
                       setCoverResults([]);
                     }}
-                    className="aspect-cover rounded-lg overflow-hidden border-2 border-transparent hover:border-blue-500 transition-all"
+                    className="relative flex-shrink-0 w-20 h-28 rounded-lg overflow-hidden border-2 border-transparent hover:border-blue-500 transition-all"
                   >
-                    <img src={url} className="w-full h-full object-cover" alt="Result" referrerPolicy="no-referrer" />
+                    <img src={res.coverUrl} className="w-full h-full object-cover" alt="Result" referrerPolicy="no-referrer" />
+                    <div className="absolute inset-0 bg-black/40 flex items-end p-1">
+                      <span className="text-[7px] text-white font-bold truncate">{res.source}</span>
+                    </div>
                   </button>
                 ))}
               </div>
