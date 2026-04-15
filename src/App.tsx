@@ -45,7 +45,8 @@ import {
   Layers,
   UserPlus,
   Calendar,
-  Handshake
+  Handshake,
+  Edit3
 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -300,10 +301,13 @@ const CategoryChip = ({
   </button>
 );
 
-const ItemCard = ({ item, onOpenDetails }: { 
+const ItemCard = ({ item, onOpenDetails, isSelected, onSelect, selectionMode }: { 
   item: LibraryItem; 
   onOpenDetails: (item: LibraryItem) => void;
   key?: React.Key;
+  isSelected?: boolean;
+  onSelect?: (id: string) => void;
+  selectionMode?: boolean;
 }) => {
   const categoryConfig = {
     book: { icon: Book, color: 'text-amber-600', border: 'category-book', label: 'Classic' },
@@ -321,10 +325,22 @@ const ItemCard = ({ item, onOpenDetails }: {
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       whileHover={{ y: -5 }}
-      className={cn("glass-card p-4 rounded-2xl flex flex-row sm:flex-col items-center sm:items-stretch space-x-4 sm:space-x-0 sm:space-y-4 group relative overflow-hidden", config.border)}
+      onClick={() => selectionMode && onSelect?.(item.id)}
+      className={cn(
+        "glass-card p-4 rounded-2xl flex flex-row sm:flex-col items-center sm:items-stretch space-x-4 sm:space-x-0 sm:space-y-4 group relative overflow-hidden cursor-pointer", 
+        config.border,
+        isSelected && "ring-2 ring-white border-white/40 bg-white/10"
+      )}
     >
       <button 
-        onClick={() => onOpenDetails(item)}
+        onClick={(e) => {
+          if (selectionMode) {
+            onSelect?.(item.id);
+          } else {
+            onOpenDetails(item);
+          }
+          e.stopPropagation();
+        }}
         className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] flex-shrink-0 bg-zinc-800/50 rounded-lg overflow-hidden relative hover:scale-[1.02] transition-transform active:scale-95 shadow-xl border border-white/5"
       >
         {item.coverUrl ? (
@@ -347,6 +363,19 @@ const ItemCard = ({ item, onOpenDetails }: {
         {item.isWishlist && (
           <div className="absolute top-2 right-2 bg-red-600/90 text-white p-1 rounded-full shadow-lg">
             <Heart className="w-3 h-3 fill-white" />
+          </div>
+        )}
+        {selectionMode && (
+          <div className={cn(
+            "absolute inset-0 flex items-center justify-center transition-all",
+            isSelected ? "bg-white/20" : "bg-black/40 opacity-0 group-hover:opacity-100"
+          )}>
+            <div className={cn(
+              "w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all",
+              isSelected ? "bg-white border-white text-black" : "border-white/50 text-transparent"
+            )}>
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
           </div>
         )}
       </button>
@@ -424,6 +453,8 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
   const [coverResults, setCoverResults] = useState<string[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
+  const [isBulkMode, setIsBulkMode] = useState(false);
+  const [bulkRange, setBulkRange] = useState({ start: 1, end: 1 });
 
   useEffect(() => {
     if (initialData) {
@@ -552,6 +583,53 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
         {showScanner && <ISBNScanner onScan={fetchMetadata} onClose={() => setShowScanner(false)} />}
 
         <div className="space-y-4">
+          {formData.category === 'manga' && !initialData && (
+            <div className="flex items-center justify-between p-3 bg-white/5 rounded-2xl border border-white/5">
+              <div className="flex items-center space-x-2">
+                <Layers className="w-4 h-4 text-purple-500" />
+                <span className="text-xs font-bold text-white uppercase tracking-widest">Bulk Add Mode</span>
+              </div>
+              <button 
+                onClick={() => setIsBulkMode(!isBulkMode)}
+                className={cn(
+                  "w-10 h-5 rounded-full transition-all relative",
+                  isBulkMode ? "bg-purple-600" : "bg-zinc-700"
+                )}
+              >
+                <div className={cn(
+                  "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                  isBulkMode ? "right-1" : "left-1"
+                )} />
+              </button>
+            </div>
+          )}
+
+          {isBulkMode && (
+            <div className="grid grid-cols-2 gap-4 p-4 bg-purple-900/10 rounded-2xl border border-purple-500/20">
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Start Volume</label>
+                <input 
+                  type="number"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none"
+                  value={bulkRange.start}
+                  onChange={e => setBulkRange({ ...bulkRange, start: parseInt(e.target.value) || 1 })}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">End Volume</label>
+                <input 
+                  type="number"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none"
+                  value={bulkRange.end}
+                  onChange={e => setBulkRange({ ...bulkRange, end: parseInt(e.target.value) || 1 })}
+                />
+              </div>
+              <p className="col-span-2 text-[10px] text-purple-400 italic text-center">
+                This will create {Math.max(0, bulkRange.end - bulkRange.start + 1)} volumes automatically.
+              </p>
+            </div>
+          )}
+
           <div className="flex space-x-4">
             <div className="w-20 h-28 flex-shrink-0 bg-zinc-800/50 rounded-xl overflow-hidden border border-white/10">
               {formData.coverUrl ? (
@@ -803,12 +881,24 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
         <button 
           disabled={!formData.title}
           onClick={() => {
-            onSave(formData);
+            if (isBulkMode) {
+              const start = Math.min(bulkRange.start, bulkRange.end);
+              const end = Math.max(bulkRange.start, bulkRange.end);
+              for (let v = start; v <= end; v++) {
+                onSave({ 
+                  ...formData, 
+                  title: formData.title,
+                  totalVolumes: v.toString()
+                });
+              }
+            } else {
+              onSave(formData);
+            }
             onClose();
           }}
           className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all disabled:opacity-50"
         >
-          {initialData ? 'Update Collection' : 'Add to Collection'}
+          {initialData ? 'Update Collection' : isBulkMode ? `Bulk Add ${Math.max(0, bulkRange.end - bulkRange.start + 1)} Volumes` : 'Add to Collection'}
         </button>
       </motion.div>
     </div>
@@ -1361,6 +1451,117 @@ const DeleteConfirmationModal = ({ isOpen, onConfirm, onCancel }: {
   );
 };
 
+const BulkToolbar = ({ count, onEdit, onDelete, onClear }: { count: number; onEdit: () => void; onDelete: () => void; onClear: () => void }) => (
+  <motion.div 
+    initial={{ y: 100 }}
+    animate={{ y: 0 }}
+    exit={{ y: 100 }}
+    className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-zinc-900 border border-white/10 rounded-2xl p-2 flex items-center space-x-2 shadow-2xl backdrop-blur-xl"
+  >
+    <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/5">
+      <span className="text-xs font-bold text-white">{count} selected</span>
+    </div>
+    <button 
+      onClick={onEdit}
+      className="p-3 bg-white/5 hover:bg-white/10 text-white rounded-xl transition-all"
+      title="Mass Edit"
+    >
+      <Edit3 className="w-5 h-5" />
+    </button>
+    <button 
+      onClick={onDelete}
+      className="p-3 bg-red-900/20 hover:bg-red-900/40 text-red-500 rounded-xl transition-all"
+      title="Mass Delete"
+    >
+      <Trash2 className="w-5 h-5" />
+    </button>
+    <div className="w-px h-8 bg-white/10 mx-1" />
+    <button 
+      onClick={onClear}
+      className="p-3 text-zinc-500 hover:text-white transition-all"
+      title="Clear Selection"
+    >
+      <X className="w-5 h-5" />
+    </button>
+  </motion.div>
+);
+
+const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: () => void; onSave: (updates: any) => void }) => {
+  const [seriesName, setSeriesName] = useState('');
+  const [author, setAuthor] = useState('');
+  const [status, setStatus] = useState<Status | ''>('');
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2rem] p-6 space-y-6 shadow-2xl"
+      >
+        <div className="flex justify-between items-center">
+          <h2 className="text-xl font-serif font-bold text-white">Mass Edit</h2>
+          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="space-y-4">
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Series Name</label>
+            <input 
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+              placeholder="Series name..."
+              value={seriesName}
+              onChange={e => setSeriesName(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Author</label>
+            <input 
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+              placeholder="Author name..."
+              value={author}
+              onChange={e => setAuthor(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Status</label>
+            <div className="grid grid-cols-3 gap-2">
+              {(['unread', 'reading', 'read'] as Status[]).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setStatus(s)}
+                  className={cn(
+                    "p-2.5 rounded-xl border transition-all text-[9px] font-bold uppercase tracking-widest",
+                    status === s ? "bg-white text-black border-white" : "bg-white/5 border-white/10 text-zinc-500"
+                  )}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <button 
+          onClick={() => {
+            const updates: any = {};
+            if (seriesName) updates.seriesName = seriesName;
+            if (author) updates.author = author;
+            if (status) updates.status = status;
+            onSave(updates);
+          }}
+          className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all"
+        >
+          Apply Changes
+        </button>
+      </motion.div>
+    </div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -1378,6 +1579,10 @@ export default function App() {
   const [selectedItemDetails, setSelectedItemDetails] = useState<LibraryItem | null>(null);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [groupBySeries, setGroupBySeries] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('nerdshelf_sort', sortBy);
@@ -1541,6 +1746,39 @@ export default function App() {
     }
   };
 
+  const toggleSelection = (id: string) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const handleBulkUpdate = async (updates: any) => {
+    try {
+      const promises = selectedIds.map(id => 
+        updateDoc(doc(db, 'libraryItems', id), updates)
+      );
+      await Promise.all(promises);
+      setSelectedIds([]);
+      setIsBulkEditModalOpen(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'bulk');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    try {
+      const promises = selectedIds.map(id => 
+        deleteDoc(doc(db, 'libraryItems', id))
+      );
+      await Promise.all(promises);
+      setSelectedIds([]);
+      setIsSelectionMode(false);
+      setIsBulkDeleteConfirmOpen(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, 'bulk');
+    }
+  };
+
   if (loading) return (
     <div className="min-h-screen bg-black flex items-center justify-center">
       <div className="w-12 h-12 border-4 border-zinc-800 border-t-white rounded-full animate-spin" />
@@ -1604,6 +1842,21 @@ export default function App() {
                 </div>
                 
                 <div className="flex items-center space-x-2 shrink-0">
+                  <button 
+                    onClick={() => {
+                      setIsSelectionMode(!isSelectionMode);
+                      if (isSelectionMode) setSelectedIds([]);
+                    }}
+                    className={cn(
+                      "p-2 rounded-lg border transition-all flex items-center space-x-2",
+                      isSelectionMode ? "bg-white text-black border-white" : "bg-transparent border-white/5 text-zinc-500 hover:text-white"
+                    )}
+                    title="Selection Mode"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest hidden md:block">Select</span>
+                  </button>
+
                   <button 
                     onClick={() => setGroupBySeries(!groupBySeries)}
                     className={cn(
@@ -1684,6 +1937,9 @@ export default function App() {
                               key={item.id} 
                               item={item} 
                               onOpenDetails={(item) => setSelectedItemDetails(item)}
+                              isSelected={selectedIds.includes(item.id)}
+                              onSelect={toggleSelection}
+                              selectionMode={isSelectionMode}
                             />
                           ))}
                         </div>
@@ -1708,6 +1964,9 @@ export default function App() {
                             key={item.id} 
                             item={item} 
                             onOpenDetails={(item) => setSelectedItemDetails(item)}
+                            isSelected={selectedIds.includes(item.id)}
+                            onSelect={toggleSelection}
+                            selectionMode={isSelectionMode}
                           />
                         ))}
                       </div>
@@ -1724,6 +1983,9 @@ export default function App() {
                       key={item.id} 
                       item={item} 
                       onOpenDetails={(item) => setSelectedItemDetails(item)}
+                      isSelected={selectedIds.includes(item.id)}
+                      onSelect={toggleSelection}
+                      selectionMode={isSelectionMode}
                     />
                   ))}
                 </motion.div>
@@ -1807,6 +2069,32 @@ export default function App() {
         onSave={handleSaveItem}
         initialData={editingItem}
         existingAuthors={items.map(i => i.author).filter(Boolean)}
+      />
+
+      <AnimatePresence>
+        {isSelectionMode && (
+          <BulkToolbar 
+            count={selectedIds.length} 
+            onEdit={() => setIsBulkEditModalOpen(true)}
+            onDelete={() => setIsBulkDeleteConfirmOpen(true)}
+            onClear={() => {
+              setIsSelectionMode(false);
+              setSelectedIds([]);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <DeleteConfirmationModal 
+        isOpen={isBulkDeleteConfirmOpen}
+        onConfirm={handleBulkDelete}
+        onCancel={() => setIsBulkDeleteConfirmOpen(false)}
+      />
+
+      <BulkEditModal 
+        isOpen={isBulkEditModalOpen}
+        onClose={() => setIsBulkEditModalOpen(false)}
+        onSave={handleBulkUpdate}
       />
 
       <DeleteConfirmationModal 
