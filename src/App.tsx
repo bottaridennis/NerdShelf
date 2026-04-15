@@ -303,7 +303,7 @@ const CategoryChip = ({
 const ItemCard = ({ item, onOpenDetails }: { 
   item: LibraryItem; 
   onOpenDetails: (item: LibraryItem) => void;
-  key?: string;
+  key?: React.Key;
 }) => {
   const categoryConfig = {
     book: { icon: Book, color: 'text-amber-600', border: 'category-book', label: 'Classic' },
@@ -995,8 +995,8 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
                     paddingAngle={5}
                     dataKey="value"
                   >
-                    {categoryData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    {categoryData.map((entry) => (
+                      <Cell key={`cell-category-${entry.name}`} fill={COLORS[categoryData.indexOf(entry) % COLORS.length]} />
                     ))}
                   </Pie>
                   <Tooltip 
@@ -1021,8 +1021,8 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
                   contentStyle={{ backgroundColor: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
                 />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                  {statusData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  {statusData.map((entry) => (
+                    <Cell key={`cell-status-${entry.name}`} fill={entry.color} />
                   ))}
                 </Bar>
               </BarChart>
@@ -1377,6 +1377,7 @@ export default function App() {
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
   const [selectedItemDetails, setSelectedItemDetails] = useState<LibraryItem | null>(null);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
+  const [groupBySeries, setGroupBySeries] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('nerdshelf_sort', sortBy);
@@ -1551,46 +1552,36 @@ export default function App() {
   return (
     <div className="min-h-screen pb-24">
       {/* Header */}
-      <header className="relative sm:sticky sm:top-0 z-40 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-4">
-        <div className="max-w-6xl mx-auto space-y-4">
-          <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-serif font-bold text-white">
-              Nerd<span className="text-red-700">Shelf</span>
-            </h1>
-            <div className="flex items-center space-x-4">
+      <header className="relative sm:sticky sm:top-0 z-40 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-3">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center justify-between sm:justify-start sm:space-x-8">
+              <h1 className="text-xl font-serif font-bold text-white shrink-0">
+                Nerd<span className="text-red-700">Shelf</span>
+              </h1>
+              
               <nav className="hidden sm:flex items-center space-x-1 bg-white/5 p-1 rounded-xl border border-white/5">
                 <button 
                   onClick={() => setView('library')}
-                  className={cn("px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all", view === 'library' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
+                  className={cn("px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all", view === 'library' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
                 >
                   Library
                 </button>
                 <button 
                   onClick={() => setView('dashboard')}
-                  className={cn("px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all", view === 'dashboard' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
+                  className={cn("px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all", view === 'dashboard' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
                 >
                   Stats
                 </button>
                 <button 
                   onClick={() => setView('wishlist')}
-                  className={cn("px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all", view === 'wishlist' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
+                  className={cn("px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all", view === 'wishlist' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
                 >
                   Wishlist
                 </button>
               </nav>
-              <div className="flex items-center space-x-2">
-                {view === 'library' && (
-                  <select 
-                    value={sortBy}
-                    onChange={e => setSortBy(e.target.value as SortOption)}
-                    className="bg-white/5 border border-white/10 text-[10px] uppercase font-bold tracking-widest text-zinc-400 rounded-lg px-2 py-1 focus:outline-none"
-                  >
-                    <option value="date" className="bg-zinc-900">Newest</option>
-                    <option value="title" className="bg-zinc-900">Title</option>
-                    <option value="author" className="bg-zinc-900">Author</option>
-                    <option value="status" className="bg-zinc-900">Status</option>
-                  </select>
-                )}
+
+              <div className="sm:hidden flex items-center space-x-2">
                 <button 
                   onClick={() => signOut(auth)}
                   className="p-2 text-zinc-500 hover:text-white transition-colors"
@@ -1599,27 +1590,69 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {view === 'library' && (
+              <div className="flex flex-1 items-center space-x-3 max-w-2xl">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+                  <input 
+                    className="w-full bg-white/5 border border-white/5 rounded-xl py-2 pl-10 pr-4 text-xs text-white focus:outline-none focus:bg-white/10 transition-all"
+                    placeholder="Search library..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                </div>
+                
+                <div className="flex items-center space-x-2 shrink-0">
+                  <button 
+                    onClick={() => setGroupBySeries(!groupBySeries)}
+                    className={cn(
+                      "p-2 rounded-lg border transition-all",
+                      groupBySeries ? "bg-white/10 border-white/20 text-white" : "bg-transparent border-white/5 text-zinc-500 hover:text-white"
+                    )}
+                    title="Group by Series"
+                  >
+                    <Layers className="w-4 h-4" />
+                  </button>
+
+                  <select 
+                    value={sortBy}
+                    onChange={e => setSortBy(e.target.value as SortOption)}
+                    className="bg-white/5 border border-white/10 text-[9px] uppercase font-bold tracking-widest text-zinc-400 rounded-lg px-2 py-2 focus:outline-none"
+                  >
+                    <option value="date" className="bg-zinc-900">Newest</option>
+                    <option value="title" className="bg-zinc-900">Title</option>
+                    <option value="author" className="bg-zinc-900">Author</option>
+                    <option value="status" className="bg-zinc-900">Status</option>
+                  </select>
+
+                  <button 
+                    onClick={() => signOut(auth)}
+                    className="hidden sm:block p-2 text-zinc-500 hover:text-white transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {view !== 'library' && (
+              <button 
+                onClick={() => signOut(auth)}
+                className="hidden sm:block p-2 text-zinc-500 hover:text-white transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           {view === 'library' && (
-            <>
-              <div className="relative">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                <input 
-                  className="w-full bg-white/5 border border-white/5 rounded-2xl py-3 pl-12 pr-4 text-sm text-white focus:outline-none focus:bg-white/10 transition-all"
-                  placeholder="Search your library..."
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                />
-              </div>
-
-              <div className="flex space-x-2 overflow-x-auto no-scrollbar pb-1">
-                <CategoryChip label="All" active={filter === 'all'} onClick={() => setFilter('all')} colorClass="bg-white text-black" />
-                <CategoryChip label="Books" active={filter === 'book'} onClick={() => setFilter('book')} colorClass="btn-book text-white" />
-                <CategoryChip label="Manga" active={filter === 'manga'} onClick={() => setFilter('manga')} colorClass="btn-manga text-white" />
-                <CategoryChip label="RPG" active={filter === 'gdr'} onClick={() => setFilter('gdr')} colorClass="btn-gdr text-white" />
-              </div>
-            </>
+            <div className="flex space-x-2 overflow-x-auto no-scrollbar pt-3 border-t border-white/5 mt-3">
+              <CategoryChip label="All" active={filter === 'all'} onClick={() => setFilter('all')} colorClass="bg-white text-black" />
+              <CategoryChip label="Books" active={filter === 'book'} onClick={() => setFilter('book')} colorClass="btn-book text-white" />
+              <CategoryChip label="Manga" active={filter === 'manga'} onClick={() => setFilter('manga')} colorClass="btn-manga text-white" />
+              <CategoryChip label="RPG" active={filter === 'gdr'} onClick={() => setFilter('gdr')} colorClass="btn-gdr text-white" />
+            </div>
           )}
         </div>
       </header>
@@ -1631,55 +1664,74 @@ export default function App() {
         ) : (
           <div className="p-6 space-y-10">
             <AnimatePresence mode="popLayout">
-              {Object.entries(groupedItems.groups).map(([seriesName, seriesItems]) => {
-                const items = seriesItems as LibraryItem[];
-                return (
-                  <div key={seriesName} className="space-y-4">
-                    <div className="flex items-center space-x-3">
-                      <div className="p-2 bg-white/5 rounded-lg border border-white/10">
-                        <Layers className="w-4 h-4 text-zinc-400" />
+              {groupBySeries ? (
+                <motion.div key="grouped-view" className="space-y-10">
+                  {/* Series Groups */}
+                  {Object.entries(groupedItems.groups).map(([seriesName, seriesItems]) => {
+                    const items = seriesItems as LibraryItem[];
+                    return (
+                      <div key={`series-${seriesName}`} className="space-y-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="p-2 bg-white/5 rounded-lg border border-white/10">
+                            <Layers className="w-4 h-4 text-zinc-400" />
+                          </div>
+                          <h2 className="text-lg font-serif font-bold text-white">{seriesName}</h2>
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{items.length} items</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                          {items.map(item => (
+                            <ItemCard 
+                              key={item.id} 
+                              item={item} 
+                              onOpenDetails={(item) => setSelectedItemDetails(item)}
+                            />
+                          ))}
+                        </div>
                       </div>
-                      <h2 className="text-lg font-serif font-bold text-white">{seriesName}</h2>
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{items.length} items</span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                      {items.map(item => (
-                        <ItemCard 
-                          key={item.id} 
-                          item={item} 
-                          onOpenDetails={(item) => setSelectedItemDetails(item)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
 
-              {/* Standalone Items */}
-              {groupedItems.standalone.length > 0 && (
-                <div className="space-y-4">
-                  {Object.keys(groupedItems.groups).length > 0 && (
-                    <div className="flex items-center space-x-3">
-                      <div className="p-2 bg-white/5 rounded-lg border border-white/10">
-                        <Book className="w-4 h-4 text-zinc-400" />
+                  {/* Standalone Items */}
+                  {groupedItems.standalone.length > 0 && (
+                    <div key="standalone-group" className="space-y-4">
+                      {Object.keys(groupedItems.groups).length > 0 && (
+                        <div className="flex items-center space-x-3">
+                          <div className="p-2 bg-white/5 rounded-lg border border-white/10">
+                            <Book className="w-4 h-4 text-zinc-400" />
+                          </div>
+                          <h2 className="text-lg font-serif font-bold text-white">Single Volumes</h2>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                        {groupedItems.standalone.map(item => (
+                          <ItemCard 
+                            key={item.id} 
+                            item={item} 
+                            onOpenDetails={(item) => setSelectedItemDetails(item)}
+                          />
+                        ))}
                       </div>
-                      <h2 className="text-lg font-serif font-bold text-white">Single Volumes</h2>
                     </div>
                   )}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                    {groupedItems.standalone.map(item => (
-                      <ItemCard 
-                        key={item.id} 
-                        item={item} 
-                        onOpenDetails={(item) => setSelectedItemDetails(item)}
-                      />
-                    ))}
-                  </div>
-                </div>
+                </motion.div>
+              ) : (
+                <motion.div 
+                  key="flat-view"
+                  className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6"
+                >
+                  {filteredItems.map(item => (
+                    <ItemCard 
+                      key={item.id} 
+                      item={item} 
+                      onOpenDetails={(item) => setSelectedItemDetails(item)}
+                    />
+                  ))}
+                </motion.div>
               )}
 
               {filteredItems.length === 0 && (
                 <motion.div 
+                  key="empty-state"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   className="text-center py-20 space-y-4"
