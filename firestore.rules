@@ -22,6 +22,10 @@ service cloud.firestore {
     //   - totalPages: number (optional)
     //   - pagesRead: number (optional)
     //   - coverUrl: string (optional)
+    //   - isWishlist: bool (optional)
+    //   - seriesName: string (optional)
+    //   - loanedTo: string (optional)
+    //   - loanDate: timestamp (optional)
     //   - createdAt: timestamp (required, immutable)
     //
     // ===============================================================
@@ -40,7 +44,7 @@ service cloud.firestore {
 
     function isValidLibraryItem(data) {
       return data.keys().hasAll(['userId', 'title', 'category', 'status', 'createdAt']) &&
-             data.keys().hasOnly(['userId', 'title', 'author', 'category', 'status', 'genre', 'price', 'isbn', 'totalVolumes', 'system', 'totalPages', 'pagesRead', 'coverUrl', 'createdAt']) &&
+             data.keys().hasOnly(['userId', 'title', 'author', 'category', 'status', 'genre', 'price', 'isbn', 'totalVolumes', 'system', 'totalPages', 'pagesRead', 'coverUrl', 'createdAt', 'isWishlist', 'seriesName', 'loanedTo', 'loanDate']) &&
              data.userId is string &&
              data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
              (!('author' in data) || (data.author is string && data.author.size() <= 200)) &&
@@ -54,6 +58,10 @@ service cloud.firestore {
              (!('totalPages' in data) || (data.totalPages is number && data.totalPages >= 0)) &&
              (!('pagesRead' in data) || (data.pagesRead is number && data.pagesRead >= 0)) &&
              (!('coverUrl' in data) || data.coverUrl is string) &&
+             (!('isWishlist' in data) || data.isWishlist is bool) &&
+             (!('seriesName' in data) || data.seriesName is string) &&
+             (!('loanedTo' in data) || data.loanedTo is string) &&
+             (!('loanDate' in data) || data.loanDate is timestamp) &&
              data.createdAt is timestamp;
     }
 

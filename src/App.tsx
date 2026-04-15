@@ -39,8 +39,15 @@ import {
   Trash2,
   ChevronRight,
   X,
-  Pencil
+  Pencil,
+  Scan,
+  Heart,
+  Layers,
+  UserPlus,
+  Calendar,
+  Handshake
 } from 'lucide-react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -60,6 +67,57 @@ import {
 // --- Utility ---
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
 }
 
 // --- Types ---
@@ -82,10 +140,97 @@ interface LibraryItem {
   totalPages?: number;
   pagesRead?: number;
   coverUrl?: string;
+  isWishlist?: boolean;
+  seriesName?: string;
+  loanedTo?: string;
+  loanDate?: any;
   createdAt: any;
 }
 
 // --- Components ---
+
+export class ErrorBoundary extends React.Component<any, any> {
+  state: any = { hasError: false, errorInfo: null };
+  props: any;
+
+  constructor(props: any) {
+    super(props);
+    this.props = props;
+  }
+
+  static getDerivedStateFromError(error: any) {
+    try {
+      const info = JSON.parse(error.message);
+      return { hasError: true, errorInfo: info };
+    } catch {
+      return { hasError: true, errorInfo: { error: error.message } };
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-black flex items-center justify-center p-6">
+          <div className="glass-card p-8 rounded-[2rem] border border-red-900/20 max-w-lg w-full space-y-6 text-center">
+            <div className="w-16 h-16 bg-red-900/20 rounded-full flex items-center justify-center mx-auto">
+              <X className="w-8 h-8 text-red-500" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-serif font-bold text-white">Ops! Qualcosa è andato storto</h2>
+              <p className="text-zinc-400 text-sm">
+                Si è verificato un errore durante la comunicazione con il database.
+              </p>
+            </div>
+            {this.state.errorInfo && (
+              <div className="bg-black/40 p-4 rounded-xl text-left overflow-hidden">
+                <p className="text-[10px] uppercase font-bold text-red-500 tracking-widest mb-2">Dettagli Tecnici</p>
+                <pre className="text-[10px] text-zinc-500 font-mono whitespace-pre-wrap break-all">
+                  {JSON.stringify(this.state.errorInfo, null, 2)}
+                </pre>
+              </div>
+            )}
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-white text-black font-bold rounded-xl hover:bg-zinc-200 transition-all"
+            >
+              Ricarica App
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const ISBNScanner = ({ onScan, onClose }: { onScan: (isbn: string) => void; onClose: () => void }) => {
+  useEffect(() => {
+    const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 150 } }, false);
+    scanner.render((decodedText) => {
+      onScan(decodedText);
+      scanner.clear();
+      onClose();
+    }, (error) => {
+      // console.warn(error);
+    });
+    return () => {
+      scanner.clear();
+    };
+  }, [onScan, onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+      <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2rem] p-6 space-y-4">
+        <div className="flex justify-between items-center">
+          <h3 className="text-lg font-serif font-bold text-white">Scan ISBN Barcode</h3>
+          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+        </div>
+        <div id="reader" className="overflow-hidden rounded-2xl border border-white/5"></div>
+        <p className="text-[10px] text-zinc-500 text-center uppercase tracking-widest">Point your camera at the barcode</p>
+      </div>
+    </div>
+  );
+};
 
 const AuthScreen = () => {
   const handleLogin = async () => {
@@ -194,6 +339,16 @@ const ItemCard = ({ item, onOpenDetails }: {
             <Icon className="w-10 h-10 sm:w-12 sm:h-12 opacity-20" />
           </div>
         )}
+        {item.loanedTo && (
+          <div className="absolute top-2 left-2 bg-amber-500 text-black text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded shadow-lg">
+            Loaned
+          </div>
+        )}
+        {item.isWishlist && (
+          <div className="absolute top-2 right-2 bg-red-600/90 text-white p-1 rounded-full shadow-lg">
+            <Heart className="w-3 h-3 fill-white" />
+          </div>
+        )}
       </button>
       
       <div className="flex-1 min-w-0 flex flex-col justify-between h-full sm:min-h-[100px]">
@@ -259,11 +414,16 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
     system: '',
     totalPages: '' as string | number,
     pagesRead: '' as string | number,
-    coverUrl: ''
+    coverUrl: '',
+    isWishlist: false,
+    seriesName: '',
+    loanedTo: '',
+    loanDate: null as any
   });
 
   const [coverResults, setCoverResults] = useState<string[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
 
   useEffect(() => {
     if (initialData) {
@@ -279,7 +439,11 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
         system: initialData.system || '',
         totalPages: initialData.totalPages ?? '',
         pagesRead: initialData.pagesRead ?? '',
-        coverUrl: initialData.coverUrl || ''
+        coverUrl: initialData.coverUrl || '',
+        isWishlist: initialData.isWishlist || false,
+        seriesName: initialData.seriesName || '',
+        loanedTo: initialData.loanedTo || '',
+        loanDate: initialData.loanDate || null
       });
     } else {
       setFormData({
@@ -294,10 +458,37 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
         system: '',
         totalPages: '',
         pagesRead: '',
-        coverUrl: ''
+        coverUrl: '',
+        isWishlist: false,
+        seriesName: '',
+        loanedTo: '',
+        loanDate: null
       });
     }
   }, [initialData, isOpen]);
+
+  const fetchMetadata = async (isbn: string) => {
+    try {
+      setIsSearching(true);
+      const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+      const data = await res.json();
+      if (data.items && data.items.length > 0) {
+        const info = data.items[0].volumeInfo;
+        setFormData(prev => ({
+          ...prev,
+          title: info.title || prev.title,
+          author: info.authors ? info.authors.join(', ') : prev.author,
+          totalPages: info.pageCount || prev.totalPages,
+          coverUrl: info.imageLinks ? info.imageLinks.thumbnail.replace('http:', 'https:') : prev.coverUrl,
+          isbn: isbn
+        }));
+      }
+    } catch (error) {
+      console.error("Metadata fetch failed:", error);
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
   const searchCovers = async () => {
     if (!formData.title) return;
@@ -346,8 +537,19 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
           <h2 className="text-xl font-serif font-bold text-white">
             {initialData ? 'Edit Treasure' : 'New Treasure'}
           </h2>
-          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+          <div className="flex items-center space-x-2">
+            <button 
+              onClick={() => setShowScanner(true)}
+              className="p-2 bg-white/5 border border-white/10 rounded-xl text-zinc-400 hover:text-white transition-all"
+              title="Scan ISBN"
+            >
+              <Scan className="w-5 h-5" />
+            </button>
+            <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+          </div>
         </div>
+
+        {showScanner && <ISBNScanner onScan={fetchMetadata} onClose={() => setShowScanner(false)} />}
 
         <div className="space-y-4">
           <div className="flex space-x-4">
@@ -400,6 +602,38 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
               </div>
             </div>
           )}
+
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Series Name (Optional)</label>
+            <input 
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+              placeholder="e.g. One Piece, Harry Potter..."
+              value={formData.seriesName}
+              onChange={e => setFormData({ ...formData, seriesName: e.target.value })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+            <div className="flex items-center space-x-3">
+              <Heart className={cn("w-5 h-5", formData.isWishlist ? "text-red-500 fill-red-500" : "text-zinc-600")} />
+              <div>
+                <p className="text-xs font-bold text-white">Add to Wishlist</p>
+                <p className="text-[10px] text-zinc-500">Items you want to buy later</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => setFormData({ ...formData, isWishlist: !formData.isWishlist })}
+              className={cn(
+                "w-10 h-5 rounded-full transition-all relative",
+                formData.isWishlist ? "bg-red-600" : "bg-zinc-700"
+              )}
+            >
+              <div className={cn(
+                "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
+                formData.isWishlist ? "left-6" : "left-1"
+              )} />
+            </button>
+          </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
@@ -589,7 +823,8 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
   });
 
   const filteredItems = useMemo(() => {
-    return filter === 'all' ? items : items.filter(i => i.category === filter);
+    const collectionOnly = items.filter(i => !i.isWishlist);
+    return filter === 'all' ? collectionOnly : collectionOnly.filter(i => i.category === filter);
   }, [items, filter]);
 
   const stats = useMemo(() => {
@@ -862,12 +1097,13 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
   );
 };
 
-const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, onEdit, onDelete }: {
+const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, onUpdateLoan, onEdit, onDelete }: {
   item: LibraryItem | null;
   isOpen: boolean;
   onClose: () => void;
   onUpdateStatus: (id: string, status: Status) => void;
   onUpdatePages: (id: string, pagesRead: number) => void;
+  onUpdateLoan: (id: string, loanedTo: string, loanDate: Date | null) => void;
   onEdit: (item: LibraryItem) => void;
   onDelete: (id: string) => void;
 }) => {
@@ -1031,6 +1267,57 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
               <p className="text-white text-xs">{item.system}</p>
             </div>
           )}
+          {item.seriesName && (
+            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">Series</label>
+              <p className="text-white text-xs">{item.seriesName}</p>
+            </div>
+          )}
+        </div>
+
+        {/* Loan Section */}
+        <div className="glass-card p-5 rounded-3xl space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <Handshake className={cn("w-5 h-5", item.loanedTo ? "text-amber-500" : "text-zinc-600")} />
+              <div>
+                <p className="text-xs font-bold text-white">Loan Registry</p>
+                <p className="text-[10px] text-zinc-500">Track who borrowed this</p>
+              </div>
+            </div>
+            {item.loanedTo && (
+              <button 
+                onClick={() => onUpdateLoan(item.id, '', null)}
+                className="text-[10px] font-bold text-red-500 uppercase tracking-widest hover:underline"
+              >
+                Return Item
+              </button>
+            )}
+          </div>
+
+          {item.loanedTo ? (
+            <div className="p-3 bg-amber-900/10 border border-amber-900/20 rounded-xl">
+              <p className="text-xs text-white">Loaned to <span className="font-bold text-amber-500">{item.loanedTo}</span></p>
+              <p className="text-[10px] text-zinc-500">Since {item.loanDate?.toDate().toLocaleDateString()}</p>
+            </div>
+          ) : (
+            <div className="flex space-x-2">
+              <input 
+                id={`loan-input-${item.id}`}
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none focus:border-white/20"
+                placeholder="Friend's name..."
+              />
+              <button 
+                onClick={() => {
+                  const input = document.getElementById(`loan-input-${item.id}`) as HTMLInputElement;
+                  if (input.value) onUpdateLoan(item.id, input.value, new Date());
+                }}
+                className="px-4 bg-white text-black text-[10px] font-bold uppercase tracking-widest rounded-xl hover:bg-zinc-200"
+              >
+                Loan
+              </button>
+            </div>
+          )}
         </div>
       </motion.div>
     </div>
@@ -1078,7 +1365,7 @@ const DeleteConfirmationModal = ({ isOpen, onConfirm, onCancel }: {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [view, setView] = useState<'library' | 'dashboard'>('library');
+  const [view, setView] = useState<'library' | 'dashboard' | 'wishlist'>('library');
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [search, setSearch] = useState('');
@@ -1143,27 +1430,53 @@ export default function App() {
   const filteredItems = useMemo(() => {
     let result = items.filter(item => {
       const matchesSearch = item.title.toLowerCase().includes(search.toLowerCase()) || 
-                           item.author.toLowerCase().includes(search.toLowerCase());
+                           item.author.toLowerCase().includes(search.toLowerCase()) ||
+                           (item.seriesName && item.seriesName.toLowerCase().includes(search.toLowerCase()));
       const matchesFilter = filter === 'all' || item.category === filter;
-      return matchesSearch && matchesFilter;
+      const matchesView = view === 'wishlist' ? item.isWishlist : !item.isWishlist;
+      return matchesSearch && matchesFilter && matchesView;
     });
 
     return result.sort((a, b) => {
       if (sortBy === 'title') return a.title.localeCompare(b.title);
       if (sortBy === 'author') return a.author.localeCompare(b.author);
       if (sortBy === 'status') return a.status.localeCompare(b.status);
-      return 0; // Default to Firestore's desc order
+      return 0;
     });
-  }, [items, search, filter, sortBy]);
+  }, [items, search, filter, sortBy, view]);
+
+  const groupedItems = useMemo(() => {
+    const groups: Record<string, LibraryItem[]> = {};
+    const standalone: LibraryItem[] = [];
+
+    filteredItems.forEach(item => {
+      if (item.seriesName) {
+        if (!groups[item.seriesName]) groups[item.seriesName] = [];
+        groups[item.seriesName].push(item);
+      } else {
+        standalone.push(item);
+      }
+    });
+
+    return { groups, standalone };
+  }, [filteredItems]);
 
   const handleSaveItem = async (data: any) => {
     if (!user) return;
     
-    // Clean numeric fields: remove empty strings to satisfy Firestore rules
+    // Clean optional fields: remove empty strings/nulls to satisfy Firestore rules
     const cleanData = { ...data };
-    if (cleanData.price === '') delete cleanData.price;
-    if (cleanData.totalPages === '') delete cleanData.totalPages;
-    if (cleanData.pagesRead === '') delete cleanData.pagesRead;
+    if (cleanData.price === '' || cleanData.price === null) delete cleanData.price;
+    if (cleanData.totalPages === '' || cleanData.totalPages === null) delete cleanData.totalPages;
+    if (cleanData.pagesRead === '' || cleanData.pagesRead === null) delete cleanData.pagesRead;
+    if (cleanData.genre === '') delete cleanData.genre;
+    if (cleanData.isbn === '') delete cleanData.isbn;
+    if (cleanData.totalVolumes === '') delete cleanData.totalVolumes;
+    if (cleanData.system === '') delete cleanData.system;
+    if (cleanData.coverUrl === '') delete cleanData.coverUrl;
+    if (cleanData.seriesName === '') delete cleanData.seriesName;
+    if (cleanData.loanedTo === '') delete cleanData.loanedTo;
+    if (cleanData.loanDate === null) delete cleanData.loanDate;
 
     try {
       if (editingItem) {
@@ -1176,7 +1489,7 @@ export default function App() {
         });
       }
     } catch (error) {
-      console.error("Error saving item:", error);
+      handleFirestoreError(error, editingItem ? OperationType.UPDATE : OperationType.CREATE, 'libraryItems');
     }
   };
 
@@ -1187,7 +1500,7 @@ export default function App() {
         setSelectedItemDetails(prev => prev ? { ...prev, status } : null);
       }
     } catch (error) {
-      console.error("Error updating status:", error);
+      handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${id}`);
     }
   };
 
@@ -1198,7 +1511,18 @@ export default function App() {
         setSelectedItemDetails(prev => prev ? { ...prev, pagesRead } : null);
       }
     } catch (error) {
-      console.error("Error updating pages:", error);
+      handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${id}`);
+    }
+  };
+
+  const handleUpdateLoan = async (id: string, loanedTo: string, loanDate: Date | null) => {
+    try {
+      await updateDoc(doc(db, 'libraryItems', id), { loanedTo, loanDate });
+      if (selectedItemDetails?.id === id) {
+        setSelectedItemDetails(prev => prev ? { ...prev, loanedTo, loanDate } : null);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${id}`);
     }
   };
 
@@ -1212,7 +1536,7 @@ export default function App() {
       await deleteDoc(doc(db, 'libraryItems', itemToDelete));
       setItemToDelete(null);
     } catch (error) {
-      console.error("Error deleting item:", error);
+      handleFirestoreError(error, OperationType.DELETE, `libraryItems/${itemToDelete}`);
     }
   };
 
@@ -1246,6 +1570,12 @@ export default function App() {
                   className={cn("px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all", view === 'dashboard' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
                 >
                   Stats
+                </button>
+                <button 
+                  onClick={() => setView('wishlist')}
+                  className={cn("px-4 py-1.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all", view === 'wishlist' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
+                >
+                  Wishlist
                 </button>
               </nav>
               <div className="flex items-center space-x-2">
@@ -1296,20 +1626,59 @@ export default function App() {
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto">
-        {view === 'library' ? (
-          <div className="p-6">
+        {view === 'dashboard' ? (
+          <Dashboard items={items} />
+        ) : (
+          <div className="p-6 space-y-10">
             <AnimatePresence mode="popLayout">
-              {filteredItems.length > 0 ? (
-                <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                  {filteredItems.map(item => (
-                    <ItemCard 
-                      key={item.id} 
-                      item={item} 
-                      onOpenDetails={(item) => setSelectedItemDetails(item)}
-                    />
-                  ))}
+              {Object.entries(groupedItems.groups).map(([seriesName, seriesItems]) => {
+                const items = seriesItems as LibraryItem[];
+                return (
+                  <div key={seriesName} className="space-y-4">
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-white/5 rounded-lg border border-white/10">
+                        <Layers className="w-4 h-4 text-zinc-400" />
+                      </div>
+                      <h2 className="text-lg font-serif font-bold text-white">{seriesName}</h2>
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{items.length} items</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                      {items.map(item => (
+                        <ItemCard 
+                          key={item.id} 
+                          item={item} 
+                          onOpenDetails={(item) => setSelectedItemDetails(item)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Standalone Items */}
+              {groupedItems.standalone.length > 0 && (
+                <div className="space-y-4">
+                  {Object.keys(groupedItems.groups).length > 0 && (
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-white/5 rounded-lg border border-white/10">
+                        <Book className="w-4 h-4 text-zinc-400" />
+                      </div>
+                      <h2 className="text-lg font-serif font-bold text-white">Single Volumes</h2>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                    {groupedItems.standalone.map(item => (
+                      <ItemCard 
+                        key={item.id} 
+                        item={item} 
+                        onOpenDetails={(item) => setSelectedItemDetails(item)}
+                      />
+                    ))}
+                  </div>
                 </div>
-              ) : (
+              )}
+
+              {filteredItems.length === 0 && (
                 <motion.div 
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -1323,8 +1692,6 @@ export default function App() {
               )}
             </AnimatePresence>
           </div>
-        ) : (
-          <Dashboard items={items} />
         )}
       </main>
 
@@ -1357,6 +1724,14 @@ export default function App() {
         >
           <Sparkles className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase tracking-widest">Stats</span>
+        </button>
+
+        <button 
+          onClick={() => setView('wishlist')}
+          className={cn("flex flex-col items-center space-y-1", view === 'wishlist' ? "text-white" : "text-zinc-600")}
+        >
+          <Heart className="w-6 h-6" />
+          <span className="text-[10px] font-bold uppercase tracking-widest">Wishlist</span>
         </button>
       </div>
 
@@ -1394,6 +1769,7 @@ export default function App() {
         onClose={() => setSelectedItemDetails(null)}
         onUpdateStatus={handleUpdateStatus}
         onUpdatePages={handleUpdatePages}
+        onUpdateLoan={handleUpdateLoan}
         onEdit={(item) => {
           setEditingItem(item);
           setIsModalOpen(true);
