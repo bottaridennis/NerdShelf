@@ -23,10 +23,7 @@ import {
   serverTimestamp, 
   orderBy,
   getDocFromServer,
-  deleteField,
-  getDocs,
-  setDoc,
-  limit
+  deleteField
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { searchOpenLibrary, searchAniList, searchMangaDex, type CoverResult } from './services/apiService';
@@ -476,42 +473,17 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
     if (!formData.title) return;
     setIsSearching(true);
     try {
-      const normalizedTitle = formData.title.toLowerCase().trim();
-      
-      // 1. Search in local registry first
-      let registryResults: CoverResult[] = [];
-      try {
-        const q = query(
-          collection(db, 'coverRegistry'),
-          where('title', '==', normalizedTitle),
-          orderBy('lastUsed', 'desc'),
-          limit(5)
-        );
-        const snapshot = await getDocs(q);
-        registryResults = snapshot.docs.map(doc => ({
-          title: doc.data().originalTitle || doc.data().title,
-          coverUrl: doc.data().coverUrl,
-          author: doc.data().author,
-          source: 'Community' as any
-        }));
-      } catch (e) {
-        console.error("Registry search failed:", e);
-      }
-
-      // 2. Search in external APIs
-      let apiResults: CoverResult[] = [];
+      let results: CoverResult[] = [];
       if (formData.category === 'manga') {
         const [aniList, mangaDex] = await Promise.all([
           searchAniList(formData.title),
           searchMangaDex(formData.title)
         ]);
-        apiResults = [...aniList, ...mangaDex];
+        results = [...aniList, ...mangaDex];
       } else {
-        apiResults = await searchOpenLibrary(formData.title);
+        results = await searchOpenLibrary(formData.title);
       }
-
-      // Combine: Registry results first
-      setCoverResults([...registryResults, ...apiResults]);
+      setCoverResults(results);
     } catch (error) {
       console.error("Cover search failed:", error);
     } finally {
@@ -1725,27 +1697,6 @@ export default function App() {
           userId: user.uid,
           createdAt: serverTimestamp()
         });
-      }
-
-      // Update Cover Registry
-      if (cleanData.coverUrl && cleanData.title) {
-        const normalizedTitle = cleanData.title.toLowerCase().trim();
-        const registryId = btoa(normalizedTitle + cleanData.coverUrl).replace(/[/+=]/g, '_');
-        const registryRef = doc(db, 'coverRegistry', registryId);
-        
-        try {
-          await setDoc(registryRef, {
-            title: normalizedTitle,
-            originalTitle: cleanData.title,
-            coverUrl: cleanData.coverUrl,
-            author: cleanData.author || '',
-            category: cleanData.category,
-            lastUsed: serverTimestamp(),
-            useCount: 1 // In a real app we'd use increment(1), but setDoc is simpler for now
-          }, { merge: true });
-        } catch (e) {
-          console.error("Failed to update cover registry:", e);
-        }
       }
     } catch (error) {
       handleFirestoreError(error, editingItem ? OperationType.UPDATE : OperationType.CREATE, 'libraryItems');
