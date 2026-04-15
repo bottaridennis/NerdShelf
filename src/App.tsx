@@ -341,11 +341,16 @@ const AuthScreen = () => {
         animate={{ opacity: 1, y: 0 }}
         className="text-center space-y-8 max-w-md w-full"
       >
-        <div className="space-y-2">
-          <h1 className="text-6xl font-serif font-bold text-white tracking-tighter">
-            Nerd<span className="text-red-700">Shelf</span>
-          </h1>
-          <p className="text-zinc-400 text-lg font-light">Your personal sanctuary for classics, manga, and epic quests.</p>
+        <div className="space-y-4">
+          <div className="flex justify-center">
+            <img src="/logo.svg" alt="NerdShelf Logo" className="w-24 h-24" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-6xl font-serif font-bold text-white tracking-tighter">
+              Nerd<span className="text-red-700">Shelf</span>
+            </h1>
+            <p className="text-zinc-400 text-lg font-light">Your personal sanctuary for classics, manga, and epic quests.</p>
+          </div>
         </div>
 
         <div className="glass-card p-8 rounded-3xl space-y-6">
@@ -1938,9 +1943,12 @@ export default function App() {
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center justify-between sm:justify-start sm:space-x-8">
-              <h1 className="text-xl font-serif font-bold text-white shrink-0">
-                Nerd<span className="text-red-700">Shelf</span>
-              </h1>
+              <div className="flex items-center space-x-3">
+                <img src="/logo.svg" alt="NerdShelf Logo" className="w-8 h-8" />
+                <h1 className="text-xl font-serif font-bold text-white shrink-0">
+                  Nerd<span className="text-red-700">Shelf</span>
+                </h1>
+              </div>
               
               <nav className="hidden sm:flex items-center space-x-1 bg-white/5 p-1 rounded-xl border border-white/5">
                 <button 
