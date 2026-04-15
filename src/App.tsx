@@ -54,6 +54,7 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { Logo } from './components/Logo';
 import { 
   PieChart, 
   Pie, 
@@ -343,7 +344,7 @@ const AuthScreen = () => {
       >
         <div className="space-y-4">
           <div className="flex justify-center">
-            <img src="/logo.svg" alt="NerdShelf Logo" className="w-24 h-24" />
+            <Logo className="w-24 h-24" />
           </div>
           <div className="space-y-2">
             <h1 className="text-6xl font-serif font-bold text-white tracking-tighter">
@@ -1944,7 +1945,7 @@ export default function App() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center justify-between sm:justify-start sm:space-x-8">
               <div className="flex items-center space-x-3">
-                <img src="/logo.svg" alt="NerdShelf Logo" className="w-8 h-8" />
+                <Logo className="w-8 h-8" />
                 <h1 className="text-xl font-serif font-bold text-white shrink-0">
                   Nerd<span className="text-red-700">Shelf</span>
                 </h1>
