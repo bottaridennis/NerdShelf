@@ -856,7 +856,14 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
                 <button
                   key={s.id}
                   type="button"
-                  onClick={() => setFormData({ ...formData, status: s.id as Status })}
+                  onClick={() => {
+                    const newStatus = s.id as Status;
+                    const updates: any = { status: newStatus };
+                    if (newStatus === 'read' && formData.totalPages) {
+                      updates.pagesRead = formData.totalPages;
+                    }
+                    setFormData({ ...formData, ...updates });
+                  }}
                   className={cn(
                     "flex-1 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-all",
                     formData.status === s.id 
@@ -1607,6 +1614,7 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
   const [author, setAuthor] = useState('');
   const [status, setStatus] = useState<Status | ''>('');
   const [description, setDescription] = useState('');
+  const [price, setPrice] = useState<number | ''>('');
 
   if (!isOpen) return null;
 
@@ -1670,6 +1678,18 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
               onChange={e => setDescription(e.target.value)}
             />
           </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Price (€)</label>
+            <input 
+              type="number"
+              step="0.01"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+              placeholder="0.00"
+              value={price}
+              onChange={e => setPrice(e.target.value === '' ? '' : parseFloat(e.target.value))}
+            />
+          </div>
         </div>
 
         <button 
@@ -1679,6 +1699,7 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
             if (author) updates.author = author;
             if (status) updates.status = status;
             if (description) updates.description = description;
+            if (price !== '') updates.price = price;
             onSave(updates);
             onClose();
           }}
