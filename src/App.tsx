@@ -50,7 +50,7 @@ import {
   Handshake,
   Edit3
 } from 'lucide-react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -158,6 +158,7 @@ interface LibraryItem {
   seriesName?: string;
   loanedTo?: string;
   loanDate?: any;
+  description?: string;
   createdAt: any;
 }
 
@@ -218,29 +219,106 @@ export class ErrorBoundary extends React.Component<any, any> {
 }
 
 const ISBNScanner = ({ onScan, onClose }: { onScan: (isbn: string) => void; onClose: () => void }) => {
+  const [error, setError] = useState<string | null>(null);
+  const [isStarted, setIsStarted] = useState(false);
+  const [scanner, setScanner] = useState<Html5Qrcode | null>(null);
+
   useEffect(() => {
-    const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 150 } }, false);
-    scanner.render((decodedText) => {
-      onScan(decodedText);
-      scanner.clear();
-      onClose();
-    }, (error) => {
-      // console.warn(error);
-    });
+    const newScanner = new Html5Qrcode("reader");
+    setScanner(newScanner);
     return () => {
-      scanner.clear();
+      if (newScanner.isScanning) {
+        newScanner.stop().catch(() => {});
+      }
     };
-  }, [onScan, onClose]);
+  }, []);
+
+  const startScanner = async () => {
+    if (!scanner) return;
+    setError(null);
+    try {
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 150 } },
+        (decodedText) => {
+          onScan(decodedText);
+          scanner.stop().then(() => onClose()).catch(() => onClose());
+        },
+        () => {} // ignore scan errors
+      );
+      setIsStarted(true);
+    } catch (err: any) {
+      console.error("Scanner start error:", err);
+      if (err?.toString().includes("NotAllowedError") || err?.toString().includes("Permission denied")) {
+        setError("Camera access is blocked by your browser. To fix this:\n1. Click the camera icon in your browser address bar\n2. Select 'Always allow' or 'Reset permission'\n3. Refresh the page.");
+      } else {
+        setError("Could not start camera. Make sure no other app is using it.");
+      }
+    }
+  };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
-      <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2rem] p-6 space-y-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl">
+      <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
         <div className="flex justify-between items-center">
-          <h3 className="text-lg font-serif font-bold text-white">Scan ISBN Barcode</h3>
-          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+          <div className="space-y-1">
+            <h3 className="text-xl font-serif font-bold text-white">ISBN Scanner</h3>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-[0.2em] font-bold">Hardware Interface v1.0</p>
+          </div>
+          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white transition-colors">
+            <X className="w-6 h-6" />
+          </button>
         </div>
-        <div id="reader" className="overflow-hidden rounded-2xl border border-white/5"></div>
-        <p className="text-[10px] text-zinc-500 text-center uppercase tracking-widest">Point your camera at the barcode</p>
+
+        <div className="relative aspect-video bg-black rounded-3xl overflow-hidden border border-white/5 ring-1 ring-white/10">
+          <div id="reader" className="w-full h-full"></div>
+          
+          {!isStarted && !error && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-zinc-900/50 backdrop-blur-sm">
+              <div className="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+                <Scan className="w-8 h-8 text-zinc-400" />
+              </div>
+              <button 
+                onClick={startScanner}
+                className="px-6 py-2.5 bg-white text-black text-xs font-bold uppercase tracking-widest rounded-full hover:bg-zinc-200 transition-all"
+              >
+                Initialize Camera
+              </button>
+            </div>
+          )}
+
+          {error && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center space-y-4 bg-red-950/20 backdrop-blur-md">
+              <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+                <X className="w-6 h-6 text-red-500" />
+              </div>
+              <p className="text-xs text-red-200 font-medium leading-relaxed whitespace-pre-line">{error}</p>
+              <button 
+                onClick={() => window.location.reload()}
+                className="text-[10px] font-bold text-white underline underline-offset-4 uppercase tracking-widest"
+              >
+                Refresh Page
+              </button>
+            </div>
+          )}
+
+          {isStarted && (
+            <div className="absolute inset-0 pointer-events-none border-[20px] border-black/40">
+              <div className="w-full h-full border border-white/20 rounded-xl relative">
+                <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-white"></div>
+                <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-white"></div>
+                <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-white"></div>
+                <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-white"></div>
+                <div className="absolute top-1/2 left-0 w-full h-[1px] bg-red-500/30 animate-pulse"></div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-center space-x-2 text-[9px] text-zinc-600 font-bold uppercase tracking-[0.3em]">
+          <div className={cn("w-1.5 h-1.5 rounded-full", isStarted ? "bg-green-500 animate-pulse" : "bg-zinc-800")}></div>
+          <span>{isStarted ? "System Active" : "Standby Mode"}</span>
+        </div>
       </div>
     </div>
   );
@@ -460,7 +538,8 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
     isWishlist: false,
     seriesName: '',
     loanedTo: '',
-    loanDate: null as any
+    loanDate: null as any,
+    description: ''
   });
 
   const [coverResults, setCoverResults] = useState<CoverResult[]>([]);
@@ -509,7 +588,8 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
         isWishlist: initialData.isWishlist || false,
         seriesName: initialData.seriesName || '',
         loanedTo: initialData.loanedTo || '',
-        loanDate: initialData.loanDate || null
+        loanDate: initialData.loanDate || null,
+        description: initialData.description || ''
       });
     } else {
       setFormData({
@@ -528,7 +608,8 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
         isWishlist: false,
         seriesName: '',
         loanedTo: '',
-        loanDate: null
+        loanDate: null,
+        description: ''
       });
     }
   }, [initialData, isOpen]);
@@ -546,6 +627,7 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
           author: info.authors ? info.authors.join(', ') : prev.author,
           totalPages: info.pageCount || prev.totalPages,
           coverUrl: info.imageLinks ? info.imageLinks.thumbnail.replace('http:', 'https:') : prev.coverUrl,
+          description: info.description || prev.description,
           isbn: isbn
         }));
       }
@@ -670,7 +752,12 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
                   <button 
                     key={i}
                     onClick={() => {
-                      setFormData({ ...formData, coverUrl: res.coverUrl, author: res.author || formData.author });
+                      setFormData({ 
+                        ...formData, 
+                        coverUrl: res.coverUrl, 
+                        author: res.author || formData.author,
+                        description: res.description || formData.description
+                      });
                       setCoverResults([]);
                     }}
                     className="relative flex-shrink-0 w-20 h-28 rounded-lg overflow-hidden border-2 border-transparent hover:border-blue-500 transition-all"
@@ -803,6 +890,16 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
                 ))}
               </datalist>
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Plot / Description</label>
+            <textarea 
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600 min-h-[100px] resize-none"
+              placeholder="Enter plot summary or description..."
+              value={formData.description}
+              onChange={e => setFormData({ ...formData, description: e.target.value })}
+            />
           </div>
 
           <div className="grid grid-cols-3 gap-2">
@@ -1294,6 +1391,15 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
           </div>
         </div>
 
+        {item.description && (
+          <div className="glass-card p-5 rounded-3xl space-y-2">
+            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Plot / Description</label>
+            <p className="text-zinc-300 text-xs leading-relaxed whitespace-pre-line max-h-40 overflow-y-auto no-scrollbar">
+              {item.description}
+            </p>
+          </div>
+        )}
+
         {/* Progress Section */}
         <div className="glass-card p-5 rounded-3xl space-y-3">
           <div className="flex justify-between items-center">
@@ -1494,6 +1600,7 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
   const [seriesName, setSeriesName] = useState('');
   const [author, setAuthor] = useState('');
   const [status, setStatus] = useState<Status | ''>('');
+  const [description, setDescription] = useState('');
 
   if (!isOpen) return null;
 
@@ -1547,6 +1654,16 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
               ))}
             </div>
           </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Description</label>
+            <textarea 
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 min-h-[80px] resize-none"
+              placeholder="New description for all selected items..."
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+            />
+          </div>
         </div>
 
         <button 
@@ -1555,7 +1672,9 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
             if (seriesName) updates.seriesName = seriesName;
             if (author) updates.author = author;
             if (status) updates.status = status;
+            if (description) updates.description = description;
             onSave(updates);
+            onClose();
           }}
           className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all"
         >

@@ -7,6 +7,7 @@ export interface CoverResult {
   coverUrl: string;
   source: 'OpenLibrary' | 'AniList' | 'MangaDex';
   author?: string;
+  description?: string;
 }
 
 /**
@@ -46,6 +47,7 @@ export async function searchAniList(title: string): Promise<CoverResult[]> {
           coverImage {
             large
           }
+          description
           staff (perPage: 1) {
             nodes {
               name {
@@ -79,6 +81,7 @@ export async function searchAniList(title: string): Promise<CoverResult[]> {
       title: m.title.english || m.title.romaji,
       author: m.staff?.nodes?.[0]?.name?.full,
       coverUrl: m.coverImage.large,
+      description: m.description?.replace(/<[^>]*>?/gm, ''), // Remove HTML tags
       source: 'AniList' as const
     }));
   } catch (error) {
@@ -110,6 +113,7 @@ export async function searchMangaDex(title: string): Promise<CoverResult[]> {
         title: displayTitle,
         author: authorRel?.attributes?.name,
         coverUrl: fileName ? `https://uploads.mangadex.org/covers/${mangaId}/${fileName}.256.jpg` : '',
+        description: manga.attributes.description?.en || manga.attributes.description?.[Object.keys(manga.attributes.description)[0]],
         source: 'MangaDex' as const
       };
     }).filter((res: any) => res.coverUrl);
