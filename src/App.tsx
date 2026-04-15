@@ -22,7 +22,8 @@ import {
   doc, 
   serverTimestamp, 
   orderBy,
-  getDocFromServer
+  getDocFromServer,
+  deleteField
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { 
@@ -69,6 +70,17 @@ import {
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const formatDate = (date: any) => {
+  if (!date) return '';
+  if (typeof date.toDate === 'function') {
+    return date.toDate().toLocaleDateString();
+  }
+  if (date instanceof Date) {
+    return date.toLocaleDateString();
+  }
+  return String(date);
+};
 
 enum OperationType {
   CREATE = 'create',
@@ -1388,7 +1400,7 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
           {item.loanedTo ? (
             <div className="p-3 bg-amber-900/10 border border-amber-900/20 rounded-xl">
               <p className="text-xs text-white">Loaned to <span className="font-bold text-amber-500">{item.loanedTo}</span></p>
-              <p className="text-[10px] text-zinc-500">Since {item.loanDate?.toDate().toLocaleDateString()}</p>
+              <p className="text-[10px] text-zinc-500">Since {formatDate(item.loanDate)}</p>
             </div>
           ) : (
             <div className="flex space-x-2">
@@ -1723,9 +1735,29 @@ export default function App() {
 
   const handleUpdateLoan = async (id: string, loanedTo: string, loanDate: Date | null) => {
     try {
-      await updateDoc(doc(db, 'libraryItems', id), { loanedTo, loanDate });
+      const updates: any = {};
+      if (loanedTo) {
+        updates.loanedTo = loanedTo;
+        updates.loanDate = loanDate;
+      } else {
+        updates.loanedTo = deleteField();
+        updates.loanDate = deleteField();
+      }
+
+      await updateDoc(doc(db, 'libraryItems', id), updates);
       if (selectedItemDetails?.id === id) {
-        setSelectedItemDetails(prev => prev ? { ...prev, loanedTo, loanDate } : null);
+        setSelectedItemDetails(prev => {
+          if (!prev) return null;
+          const next = { ...prev };
+          if (loanedTo) {
+            next.loanedTo = loanedTo;
+            next.loanDate = loanDate;
+          } else {
+            delete next.loanedTo;
+            delete next.loanDate;
+          }
+          return next;
+        });
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${id}`);

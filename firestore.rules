@@ -77,12 +77,10 @@ service cloud.firestore {
       allow create: if isOwner(request.resource.data.userId) && 
                       isValidLibraryItem(request.resource.data);
       
-      // Users can update their own items, but userId and createdAt are immutable
+      // Users can update their own items
       allow update: if isOwner(resource.data.userId) && 
                       isOwner(request.resource.data.userId) &&
-                      isValidLibraryItem(request.resource.data) &&
-                      request.resource.data.userId == resource.data.userId &&
-                      request.resource.data.createdAt == resource.data.createdAt;
+                      isValidLibraryItem(request.resource.data);
       
       // Users can delete their own items
       allow delete: if isOwner(resource.data.userId);
