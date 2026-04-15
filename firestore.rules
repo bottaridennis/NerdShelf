@@ -26,6 +26,7 @@ service cloud.firestore {
     //   - seriesName: string (optional)
     //   - loanedTo: string (optional)
     //   - loanDate: timestamp (optional)
+    //   - description: string (optional, max 5000)
     //   - createdAt: timestamp (required, immutable)
     //
     // ===============================================================
@@ -44,7 +45,7 @@ service cloud.firestore {
 
     function isValidLibraryItem(data) {
       return data.keys().hasAll(['userId', 'title', 'category', 'status', 'createdAt']) &&
-             data.keys().hasOnly(['userId', 'title', 'author', 'category', 'status', 'genre', 'price', 'isbn', 'totalVolumes', 'system', 'totalPages', 'pagesRead', 'coverUrl', 'createdAt', 'isWishlist', 'seriesName', 'loanedTo', 'loanDate']) &&
+             data.keys().hasOnly(['userId', 'title', 'author', 'category', 'status', 'genre', 'price', 'isbn', 'totalVolumes', 'system', 'totalPages', 'pagesRead', 'coverUrl', 'createdAt', 'isWishlist', 'seriesName', 'loanedTo', 'loanDate', 'description']) &&
              data.userId is string &&
              data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
              (!('author' in data) || (data.author is string && data.author.size() <= 200)) &&
@@ -62,6 +63,7 @@ service cloud.firestore {
              (!('seriesName' in data) || data.seriesName is string) &&
              (!('loanedTo' in data) || data.loanedTo is string) &&
              (!('loanDate' in data) || data.loanDate is timestamp) &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 5000)) &&
              data.createdAt is timestamp;
     }
 
