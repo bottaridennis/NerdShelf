@@ -1706,6 +1706,7 @@ export default function App() {
   const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false);
+  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('nerdshelf_sort', sortBy);
@@ -2011,6 +2012,57 @@ export default function App() {
                     <Layers className="w-4 h-4" />
                   </button>
 
+                  <div className="relative">
+                    <button 
+                      onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
+                      className={cn(
+                        "p-2 rounded-lg border transition-all flex items-center space-x-2",
+                        filter !== 'all' ? "bg-white/10 border-white/20 text-white" : "bg-transparent border-white/5 text-zinc-500 hover:text-white"
+                      )}
+                    >
+                      <Filter className="w-4 h-4" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest hidden lg:block">
+                        {filter === 'all' ? 'All' : filter === 'gdr' ? 'RPG' : filter}
+                      </span>
+                    </button>
+
+                    <AnimatePresence>
+                      {isFilterMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setIsFilterMenuOpen(false)} />
+                          <motion.div 
+                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                            className="absolute right-0 mt-2 w-40 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden z-20"
+                          >
+                            {[
+                              { id: 'all', label: 'All', color: 'bg-white text-black' },
+                              { id: 'book', label: 'Books', color: 'btn-book text-white' },
+                              { id: 'manga', label: 'Manga', color: 'btn-manga text-white' },
+                              { id: 'gdr', label: 'RPG', color: 'btn-gdr text-white' }
+                            ].map(cat => (
+                              <button
+                                key={cat.id}
+                                onClick={() => {
+                                  setFilter(cat.id as any);
+                                  setIsFilterMenuOpen(false);
+                                }}
+                                className={cn(
+                                  "w-full px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-between",
+                                  filter === cat.id ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5"
+                                )}
+                              >
+                                {cat.label}
+                                {filter === cat.id && <div className={cn("w-1.5 h-1.5 rounded-full", cat.id === 'all' ? "bg-white" : cat.id === 'book' ? "bg-amber-600" : cat.id === 'manga' ? "bg-purple-600" : "bg-red-700")} />}
+                              </button>
+                            ))}
+                          </motion.div>
+                        </>
+                      )}
+                    </AnimatePresence>
+                  </div>
+
                   <select 
                     value={sortBy}
                     onChange={e => setSortBy(e.target.value as SortOption)}
@@ -2043,12 +2095,7 @@ export default function App() {
           </div>
 
           {view === 'library' && (
-            <div className="flex space-x-2 overflow-x-auto no-scrollbar pt-3 border-t border-white/5 mt-3">
-              <CategoryChip label="All" active={filter === 'all'} onClick={() => setFilter('all')} colorClass="bg-white text-black" />
-              <CategoryChip label="Books" active={filter === 'book'} onClick={() => setFilter('book')} colorClass="btn-book text-white" />
-              <CategoryChip label="Manga" active={filter === 'manga'} onClick={() => setFilter('manga')} colorClass="btn-manga text-white" />
-              <CategoryChip label="RPG" active={filter === 'gdr'} onClick={() => setFilter('gdr')} colorClass="btn-gdr text-white" />
-            </div>
+            <div className="mt-3 border-t border-white/5" />
           )}
         </div>
       </header>
@@ -2153,7 +2200,23 @@ export default function App() {
       </main>
 
       {/* Mobile Nav */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-white/5 px-6 py-4 flex justify-around items-center z-40">
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-white/5 px-4 py-4 flex justify-between items-center z-40">
+        <button 
+          onClick={() => {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            setView('library');
+            // Focus search input after a short delay to allow scroll/view change
+            setTimeout(() => {
+              const searchInput = document.querySelector('header input') as HTMLInputElement;
+              if (searchInput) searchInput.focus();
+            }, 500);
+          }}
+          className="flex flex-col items-center space-y-1 text-zinc-600 hover:text-white transition-colors"
+        >
+          <Search className="w-6 h-6" />
+          <span className="text-[10px] font-bold uppercase tracking-widest">Search</span>
+        </button>
+
         <button 
           onClick={() => setView('library')}
           className={cn("flex flex-col items-center space-y-1", view === 'library' ? "text-white" : "text-zinc-600")}
