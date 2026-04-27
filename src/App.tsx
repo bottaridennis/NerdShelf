@@ -23,7 +23,8 @@ import {
   serverTimestamp, 
   orderBy,
   getDocFromServer,
-  deleteField
+  deleteField,
+  writeBatch
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { searchOpenLibrary, searchAniList, searchMangaDex, type CoverResult } from './services/apiService';
@@ -48,7 +49,9 @@ import {
   UserPlus,
   Calendar,
   Handshake,
-  Edit3
+  Edit3,
+  Download,
+  Upload
 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -138,7 +141,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 // --- Types ---
 type Category = 'book' | 'manga' | 'gdr';
 type Status = 'unread' | 'reading' | 'read';
-type SortOption = 'title' | 'author' | 'status' | 'date';
+type SortOption = 'title' | 'author' | 'status' | 'date' | 'volume';
 
 interface LibraryItem {
   id: string;
@@ -644,10 +647,35 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
     }
   };
 
+  const handleSave = () => {
+    if (!formData.title) return;
+    if (isBulkMode) {
+      const start = Math.min(bulkRange.start, bulkRange.end);
+      const end = Math.max(bulkRange.start, bulkRange.end);
+      for (let v = start; v <= end; v++) {
+        onSave({ 
+          ...formData, 
+          title: formData.title,
+          totalVolumes: v.toString()
+        });
+      }
+    } else {
+      onSave(formData);
+    }
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+    <div 
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/90 backdrop-blur-md"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey && formData.title) {
+          handleSave();
+        }
+      }}
+    >
       <motion.div 
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
@@ -994,22 +1022,7 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
 
         <button 
           disabled={!formData.title}
-          onClick={() => {
-            if (isBulkMode) {
-              const start = Math.min(bulkRange.start, bulkRange.end);
-              const end = Math.max(bulkRange.start, bulkRange.end);
-              for (let v = start; v <= end; v++) {
-                onSave({ 
-                  ...formData, 
-                  title: formData.title,
-                  totalVolumes: v.toString()
-                });
-              }
-            } else {
-              onSave(formData);
-            }
-            onClose();
-          }}
+          onClick={handleSave}
           className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all disabled:opacity-50"
         >
           {initialData ? 'Update Collection' : isBulkMode ? `Bulk Add ${Math.max(0, bulkRange.end - bulkRange.start + 1)} Volumes` : 'Add to Collection'}
@@ -1574,15 +1587,18 @@ const DeleteConfirmationModal = ({ isOpen, onConfirm, onCancel }: {
   );
 };
 
-const BulkToolbar = ({ count, onEdit, onDelete, onClear }: { count: number; onEdit: () => void; onDelete: () => void; onClear: () => void }) => (
+const BulkToolbar = ({ count, totalPrice, onEdit, onDelete, onClear }: { count: number; totalPrice: number; onEdit: () => void; onDelete: () => void; onClear: () => void }) => (
   <motion.div 
     initial={{ y: 100 }}
     animate={{ y: 0 }}
     exit={{ y: 100 }}
     className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-zinc-900 border border-white/10 rounded-2xl p-2 flex items-center space-x-2 shadow-2xl backdrop-blur-xl"
   >
-    <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/5">
+    <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/5 flex flex-col items-center">
       <span className="text-xs font-bold text-white">{count} selected</span>
+      {totalPrice > 0 && (
+        <span className="text-[9px] text-zinc-500 font-mono">Total: €{totalPrice.toFixed(2)}</span>
+      )}
     </div>
     <button 
       onClick={onEdit}
@@ -1616,10 +1632,28 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState<number | ''>('');
 
+  const handleApply = () => {
+    const updates: any = {};
+    if (seriesName) updates.seriesName = seriesName;
+    if (author) updates.author = author;
+    if (status) updates.status = status;
+    if (description) updates.description = description;
+    if (price !== '') updates.price = price;
+    onSave(updates);
+    onClose();
+  };
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+    <div 
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          handleApply();
+        }
+      }}
+    >
       <motion.div 
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
@@ -1693,20 +1727,64 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
         </div>
 
         <button 
-          onClick={() => {
-            const updates: any = {};
-            if (seriesName) updates.seriesName = seriesName;
-            if (author) updates.author = author;
-            if (status) updates.status = status;
-            if (description) updates.description = description;
-            if (price !== '') updates.price = price;
-            onSave(updates);
-            onClose();
-          }}
+          onClick={handleApply}
           className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all"
         >
           Apply Changes
         </button>
+      </motion.div>
+    </div>
+  );
+};
+
+const AlertConfirmModal = ({ 
+  isOpen, 
+  title, 
+  message, 
+  onConfirm, 
+  onClose,
+  showCancel = false 
+}: { 
+  isOpen: boolean; 
+  title: string; 
+  message: string; 
+  onConfirm?: () => void; 
+  onClose: () => void;
+  showCancel?: boolean;
+}) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl">
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-center"
+      >
+        <div className="space-y-3">
+          <h2 className="text-xl font-serif font-bold text-white">{title}</h2>
+          <p className="text-zinc-400 text-sm leading-relaxed">{message}</p>
+        </div>
+
+        <div className="flex gap-3 pt-2">
+          {showCancel && (
+            <button 
+              onClick={onClose}
+              className="flex-1 py-3.5 bg-white/5 text-zinc-500 font-bold rounded-2xl hover:bg-white/10 transition-all border border-white/5 active:scale-95"
+            >
+              Cancel
+            </button>
+          )}
+          <button 
+            onClick={() => {
+              if (onConfirm) onConfirm();
+              onClose();
+            }}
+            className="flex-1 py-3.5 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all active:scale-95 shadow-lg shadow-white/5"
+          >
+            {showCancel ? 'Confirm' : 'OK'}
+          </button>
+        </div>
       </motion.div>
     </div>
   );
@@ -1723,6 +1801,17 @@ export default function App() {
   const [filter, setFilter] = useState<Category | 'all'>('all');
   const [sortBy, setSortBy] = useState<SortOption>(() => {
     return (localStorage.getItem('nerdshelf_sort') as SortOption) || 'date';
+  });
+  const [alertConfig, setAlertConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm?: () => void;
+    showCancel?: boolean;
+  }>({
+    isOpen: false,
+    title: '',
+    message: ''
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
@@ -1798,6 +1887,14 @@ export default function App() {
       if (sortBy === 'title') return a.title.localeCompare(b.title);
       if (sortBy === 'author') return a.author.localeCompare(b.author);
       if (sortBy === 'status') return a.status.localeCompare(b.status);
+      if (sortBy === 'volume') {
+        const volA = parseFloat(a.totalVolumes || '0');
+        const volB = parseFloat(b.totalVolumes || '0');
+        if (!isNaN(volA) && !isNaN(volB)) {
+          if (volA !== volB) return volA - volB;
+        }
+        return (a.totalVolumes || '').localeCompare(b.totalVolumes || '');
+      }
       return 0;
     });
   }, [items, search, filter, sortBy, view]);
@@ -1817,6 +1914,12 @@ export default function App() {
 
     return { groups, standalone };
   }, [filteredItems]);
+
+  const totalSelectedPrice = useMemo(() => {
+    return items
+      .filter(item => selectedIds.includes(item.id))
+      .reduce((sum, item) => sum + (item.price || 0), 0);
+  }, [items, selectedIds]);
 
   const handleSaveItem = async (data: any) => {
     if (!user) return;
@@ -1950,6 +2053,86 @@ export default function App() {
     }
   };
 
+  const showAlert = (title: string, message: string, onConfirm?: () => void, showCancel = false) => {
+    setAlertConfig({ isOpen: true, title, message, onConfirm, showCancel });
+  };
+
+  const handleExportData = () => {
+    const data = JSON.stringify(items, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `nerdshelf_backup_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportData = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = async (e: any) => {
+      const file = e.target.files[0];
+      if (!file || !user) return;
+
+      const reader = new FileReader();
+      reader.onload = async (event: any) => {
+        try {
+          const importedItems = JSON.parse(event.target.result);
+          if (!Array.isArray(importedItems)) {
+            showAlert('Import Error', 'Invalid backup file format. Must be an array of items.');
+            return;
+          }
+
+          const performImport = async () => {
+            const libraryRef = collection(db, 'libraryItems');
+            
+            // Firestore batches have a limit of 500 operations
+            const chunks = [];
+            for (let i = 0; i < importedItems.length; i += 500) {
+              chunks.push(importedItems.slice(i, i + 500));
+            }
+
+            try {
+              for (const chunk of chunks) {
+                const batch = writeBatch(db);
+                chunk.forEach((item: any) => {
+                  const { id, createdAt, userId, ...cleanItem } = item;
+                  const newDocRef = doc(libraryRef);
+                  batch.set(newDocRef, {
+                    ...cleanItem,
+                    userId: user.uid,
+                    createdAt: serverTimestamp()
+                  });
+                });
+                await batch.commit();
+              }
+              showAlert('Success', 'Library imported successfully!');
+            } catch (err) {
+              console.error(err);
+              showAlert('Import Failed', 'There was an error saving the imported data to the database.');
+            }
+          };
+
+          showAlert(
+            'Import Confirmation', 
+            `Import ${importedItems.length} items? This will add them to your current library.`,
+            performImport,
+            true
+          );
+        } catch (err) {
+          console.error(err);
+          showAlert('Parse Error', 'The file content could not be read as valid JSON.');
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  };
+
   if (loading) return (
     <div className="min-h-screen bg-black flex items-center justify-center">
       <div className="w-12 h-12 border-4 border-zinc-800 border-t-white rounded-full animate-spin" />
@@ -2003,7 +2186,7 @@ export default function App() {
               </div>
             </div>
 
-            {view === 'library' && (
+            {(view === 'library' || view === 'wishlist') && (
               <div className="flex flex-1 items-center space-x-3 max-w-2xl">
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
@@ -2093,6 +2276,22 @@ export default function App() {
                     </AnimatePresence>
                   </div>
 
+                  <button 
+                    onClick={handleExportData}
+                    className="p-2 rounded-lg border bg-transparent border-white/5 text-zinc-500 hover:text-white transition-all"
+                    title="Download Backup"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+
+                  <button 
+                    onClick={handleImportData}
+                    className="p-2 rounded-lg border bg-transparent border-white/5 text-zinc-500 hover:text-white transition-all"
+                    title="Upload Backup"
+                  >
+                    <Upload className="w-4 h-4" />
+                  </button>
+
                   <select 
                     value={sortBy}
                     onChange={e => setSortBy(e.target.value as SortOption)}
@@ -2102,6 +2301,7 @@ export default function App() {
                     <option value="title" className="bg-zinc-900">Title</option>
                     <option value="author" className="bg-zinc-900">Author</option>
                     <option value="status" className="bg-zinc-900">Status</option>
+                    <option value="volume" className="bg-zinc-900">Volume</option>
                   </select>
 
                   <button 
@@ -2311,6 +2511,7 @@ export default function App() {
         {isSelectionMode && (
           <BulkToolbar 
             count={selectedIds.length} 
+            totalPrice={totalSelectedPrice}
             onEdit={() => setIsBulkEditModalOpen(true)}
             onDelete={() => setIsBulkDeleteConfirmOpen(true)}
             onClear={() => {
@@ -2351,6 +2552,15 @@ export default function App() {
           setIsModalOpen(true);
         }}
         onDelete={handleDeleteItem}
+      />
+
+      <AlertConfirmModal 
+        isOpen={alertConfig.isOpen}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        onConfirm={alertConfig.onConfirm}
+        showCancel={alertConfig.showCancel}
+        onClose={() => setAlertConfig(prev => ({ ...prev, isOpen: false }))}
       />
     </div>
   );
