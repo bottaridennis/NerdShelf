@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap');
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap");
 @import "tailwindcss";
 
 @theme {
@@ -7,25 +7,30 @@
 }
 
 :root {
-  --bg-dark: #0a0a0a;
-  --card-glass: rgba(255, 255, 255, 0.03);
+  --bg-primary: #050505;
+  --card-glass: rgba(18, 18, 20, 0.6);
   --card-border: rgba(255, 255, 255, 0.08);
-  
-  --accent-dnd: #9b1c1c; /* Crimson */
-  --accent-manga: #7e22ce; /* Purple */
-  --accent-book: #b45309; /* Bronze/Gold */
+  --card-border-hover: rgba(255, 255, 255, 0.18);
+
+  --accent-dnd: #dc2626; /* Deep Red */
+  --accent-manga: #9333ea; /* Bright Purple */
+  --accent-book: #3b82f6; /* Blue */
 }
 
 body {
-  background-color: var(--bg-dark);
-  color: #e5e5e5;
+  background-color: var(--bg-primary);
+  background-image: radial-gradient(
+    circle at 50% 0%,
+    rgba(30, 30, 40, 0.4) 0%,
+    rgba(5, 5, 5, 1) 100%
+  );
+  color: #f4f4f5;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
-  user-select: none;
-  -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
+  min-height: 100vh;
 }
 
 /* Hide scrollbar globally */
@@ -34,25 +39,63 @@ body {
 }
 
 * {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
 }
 
 .glass-card {
   background: var(--card-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--card-border);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  box-shadow: 0 4px 24px -4px rgba(0, 0, 0, 0.5);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.category-gdr { border-left: 4px solid var(--accent-dnd); }
-.category-manga { border-left: 4px solid var(--accent-manga); }
-.category-book { border-left: 4px solid var(--accent-book); }
+.glass-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--card-border-hover);
+  background: rgba(30, 30, 34, 0.7);
+  box-shadow: 0 12px 40px -10px rgba(0, 0, 0, 0.8);
+}
 
-.btn-gdr { background-color: var(--accent-dnd); }
-.btn-manga { background-color: var(--accent-manga); }
-.btn-book { background-color: var(--accent-book); }
+.glass-card.category-manga:hover {
+  box-shadow: 0 16px 40px -12px rgba(147, 51, 234, 0.3);
+  border-color: rgba(147, 51, 234, 0.5);
+  background: rgba(147, 51, 234, 0.03);
+}
+
+.glass-card.category-gdr:hover {
+  box-shadow: 0 16px 40px -12px rgba(185, 28, 28, 0.3);
+  border-color: rgba(185, 28, 28, 0.5);
+  background: rgba(185, 28, 28, 0.03);
+}
+
+.glass-card.category-book:hover {
+  box-shadow: 0 16px 40px -12px rgba(217, 119, 6, 0.3);
+  border-color: rgba(217, 119, 6, 0.5);
+  background: rgba(217, 119, 6, 0.03);
+}
+
+.category-gdr {
+  /* border-left: 4px solid var(--accent-dnd); */
+}
+.category-manga {
+  /* border-left: 4px solid var(--accent-manga); */
+}
+.category-book {
+  /* border-left: 4px solid var(--accent-book); */
+}
+
+.btn-gdr {
+  background-color: var(--accent-dnd);
+}
+.btn-manga {
+  background-color: var(--accent-manga);
+}
+.btn-book {
+  background-color: var(--accent-book);
+}
 
 .aspect-cover {
   aspect-ratio: 2 / 3;
@@ -71,6 +114,36 @@ body {
 
 /* Hide scrollbar for IE, Edge and Firefox */
 .no-scrollbar {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+@keyframes pulse-slow {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(1.05);
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
 }

@@ -3,42 +3,47 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  onAuthStateChanged, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  signOut, 
-  User 
-} from 'firebase/auth';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  serverTimestamp, 
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut,
+  User,
+} from "firebase/auth";
+import {
+  collection,
+  query,
+  where,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
   orderBy,
   getDocFromServer,
   deleteField,
-  writeBatch
-} from 'firebase/firestore';
-import { auth, db } from './firebase';
-import { searchOpenLibrary, searchAniList, searchMangaDex, type CoverResult } from './services/apiService';
-import { 
-  Book, 
-  Sword, 
-  Sparkles, 
-  Plus, 
-  LogOut, 
-  Search, 
-  Filter, 
-  BookOpen, 
-  CheckCircle2, 
-  Clock, 
+  writeBatch,
+} from "firebase/firestore";
+import { auth, db } from "./firebase";
+import {
+  searchOpenLibrary,
+  searchAniList,
+  searchMangaDex,
+  type CoverResult,
+} from "./services/apiService";
+import {
+  Book,
+  Sword,
+  Sparkles,
+  Plus,
+  LogOut,
+  Search,
+  Filter,
+  BookOpen,
+  CheckCircle2,
+  Clock,
   Trash2,
   ChevronRight,
   X,
@@ -51,25 +56,25 @@ import {
   Handshake,
   Edit3,
   Download,
-  Upload
-} from 'lucide-react';
-import { Html5Qrcode } from 'html5-qrcode';
-import { motion, AnimatePresence } from 'framer-motion';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-import { Logo } from './components/Logo';
-import { 
-  PieChart, 
-  Pie, 
-  Cell, 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  Tooltip, 
+  Upload,
+} from "lucide-react";
+import { Html5Qrcode } from "html5-qrcode";
+import { motion, AnimatePresence } from "framer-motion";
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+import { Logo } from "./components/Logo";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
   ResponsiveContainer,
-  Legend
-} from 'recharts';
+  Legend,
+} from "recharts";
 
 // --- Utility ---
 function cn(...inputs: ClassValue[]) {
@@ -77,8 +82,8 @@ function cn(...inputs: ClassValue[]) {
 }
 
 const formatDate = (date: any) => {
-  if (!date) return '';
-  if (typeof date.toDate === 'function') {
+  if (!date) return "";
+  if (typeof date.toDate === "function") {
     return date.toDate().toLocaleDateString();
   }
   if (date instanceof Date) {
@@ -88,12 +93,12 @@ const formatDate = (date: any) => {
 };
 
 enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
+  CREATE = "create",
+  UPDATE = "update",
+  DELETE = "delete",
+  LIST = "list",
+  GET = "get",
+  WRITE = "write",
 }
 
 interface FirestoreErrorInfo {
@@ -112,10 +117,14 @@ interface FirestoreErrorInfo {
       email: string | null;
       photoUrl: string | null;
     }[];
-  }
+  };
 }
 
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null,
+) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -124,24 +133,25 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
+      providerInfo:
+        auth.currentUser?.providerData.map((provider) => ({
+          providerId: provider.providerId,
+          displayName: provider.displayName,
+          email: provider.email,
+          photoUrl: provider.photoURL,
+        })) || [],
     },
     operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+    path,
+  };
+  console.error("Firestore Error: ", JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
 // --- Types ---
-type Category = 'book' | 'manga' | 'gdr';
-type Status = 'unread' | 'reading' | 'read';
-type SortOption = 'title' | 'author' | 'status' | 'date' | 'volume';
+type Category = "book" | "manga" | "gdr";
+type Status = "unread" | "reading" | "read";
+type SortOption = "title" | "author" | "status" | "date" | "volume";
 
 interface LibraryItem {
   id: string;
@@ -163,6 +173,9 @@ interface LibraryItem {
   loanedTo?: string;
   loanDate?: any;
   description?: string;
+  rating?: number;
+  review?: string;
+  tags?: string[];
   createdAt: any;
 }
 
@@ -189,28 +202,33 @@ export class ErrorBoundary extends React.Component<any, any> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-screen bg-black flex items-center justify-center p-6">
-          <div className="glass-card p-8 rounded-[2rem] border border-red-900/20 max-w-lg w-full space-y-6 text-center">
-            <div className="w-16 h-16 bg-red-900/20 rounded-full flex items-center justify-center mx-auto">
+        <div className="min-h-screen bg-transparent flex items-center justify-center p-6">
+          <div className="glass-card p-8 rounded-[2rem] border border-red-200 max-w-lg w-full space-y-6 text-center">
+            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto">
               <X className="w-8 h-8 text-red-500" />
             </div>
             <div className="space-y-2">
-              <h2 className="text-2xl font-serif font-bold text-white">Ops! Qualcosa è andato storto</h2>
-              <p className="text-zinc-400 text-sm">
-                Si è verificato un errore durante la comunicazione con il database.
+              <h2 className="text-2xl font-serif font-bold text-white">
+                Ops! Qualcosa è andato storto
+              </h2>
+              <p className="text-zinc-500 text-sm">
+                Si è verificato un errore durante la comunicazione con il
+                database.
               </p>
             </div>
             {this.state.errorInfo && (
-              <div className="bg-black/40 p-4 rounded-xl text-left overflow-hidden">
-                <p className="text-[10px] uppercase font-bold text-red-500 tracking-widest mb-2">Dettagli Tecnici</p>
+              <div className="bg-white/5 p-4 rounded-xl text-left overflow-hidden">
+                <p className="text-[10px] uppercase font-bold text-red-500 tracking-widest mb-2">
+                  Dettagli Tecnici
+                </p>
                 <pre className="text-[10px] text-zinc-500 font-mono whitespace-pre-wrap break-all">
                   {JSON.stringify(this.state.errorInfo, null, 2)}
                 </pre>
               </div>
             )}
-            <button 
+            <button
               onClick={() => window.location.reload()}
-              className="w-full py-3 bg-white text-black font-bold rounded-xl hover:bg-zinc-200 transition-all"
+              className="w-full py-3 bg-white text-zinc-900 font-bold rounded-xl hover:bg-white/10 transition-all"
             >
               Ricarica App
             </button>
@@ -222,7 +240,13 @@ export class ErrorBoundary extends React.Component<any, any> {
   }
 }
 
-const ISBNScanner = ({ onScan, onClose }: { onScan: (isbn: string) => void; onClose: () => void }) => {
+const ISBNScanner = ({
+  onScan,
+  onClose,
+}: {
+  onScan: (isbn: string) => void;
+  onClose: () => void;
+}) => {
   const [error, setError] = useState<string | null>(null);
   const [isStarted, setIsStarted] = useState(false);
   const [scanner, setScanner] = useState<Html5Qrcode | null>(null);
@@ -246,15 +270,23 @@ const ISBNScanner = ({ onScan, onClose }: { onScan: (isbn: string) => void; onCl
         { fps: 10, qrbox: { width: 250, height: 150 } },
         (decodedText) => {
           onScan(decodedText);
-          scanner.stop().then(() => onClose()).catch(() => onClose());
+          scanner
+            .stop()
+            .then(() => onClose())
+            .catch(() => onClose());
         },
-        () => {} // ignore scan errors
+        () => {}, // ignore scan errors
       );
       setIsStarted(true);
     } catch (err: any) {
       console.error("Scanner start error:", err);
-      if (err?.toString().includes("NotAllowedError") || err?.toString().includes("Permission denied")) {
-        setError("Camera access is blocked by your browser. To fix this:\n1. Click the camera icon in your browser address bar\n2. Select 'Always allow' or 'Reset permission'\n3. Refresh the page.");
+      if (
+        err?.toString().includes("NotAllowedError") ||
+        err?.toString().includes("Permission denied")
+      ) {
+        setError(
+          "Camera access is blocked by your browser. To fix this:\n1. Click the camera icon in your browser address bar\n2. Select 'Always allow' or 'Reset permission'\n3. Refresh the page.",
+        );
       } else {
         setError("Could not start camera. Make sure no other app is using it.");
       }
@@ -262,29 +294,36 @@ const ISBNScanner = ({ onScan, onClose }: { onScan: (isbn: string) => void; onCl
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-white/95 backdrop-blur-xl">
       <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
         <div className="flex justify-between items-center">
           <div className="space-y-1">
-            <h3 className="text-xl font-serif font-bold text-white">ISBN Scanner</h3>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-[0.2em] font-bold">Hardware Interface v1.0</p>
+            <h3 className="text-xl font-serif font-bold text-white">
+              ISBN Scanner
+            </h3>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-[0.2em] font-bold">
+              Hardware Interface v1.0
+            </p>
           </div>
-          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white transition-colors">
+          <button
+            onClick={onClose}
+            className="p-2 text-zinc-500 hover:text-white transition-colors"
+          >
             <X className="w-6 h-6" />
           </button>
         </div>
 
-        <div className="relative aspect-video bg-black rounded-3xl overflow-hidden border border-white/5 ring-1 ring-white/10">
+        <div className="relative aspect-video bg-black/40 rounded-3xl overflow-hidden border border-white/10 ring-1 ring-white/50/10">
           <div id="reader" className="w-full h-full"></div>
-          
+
           {!isStarted && !error && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-zinc-900/50 backdrop-blur-sm">
+            <div className="absolute inset-0 flex flex-col items-center justify-center space-y-4 bg-white/5 backdrop-blur-sm">
               <div className="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
-                <Scan className="w-8 h-8 text-zinc-400" />
+                <Scan className="w-8 h-8 text-zinc-500" />
               </div>
-              <button 
+              <button
                 onClick={startScanner}
-                className="px-6 py-2.5 bg-white text-black text-xs font-bold uppercase tracking-widest rounded-full hover:bg-zinc-200 transition-all"
+                className="px-6 py-2.5 bg-white text-zinc-900 text-xs font-bold uppercase tracking-widest rounded-full hover:bg-white/10 transition-all"
               >
                 Initialize Camera
               </button>
@@ -296,8 +335,10 @@ const ISBNScanner = ({ onScan, onClose }: { onScan: (isbn: string) => void; onCl
               <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
                 <X className="w-6 h-6 text-red-500" />
               </div>
-              <p className="text-xs text-red-200 font-medium leading-relaxed whitespace-pre-line">{error}</p>
-              <button 
+              <p className="text-xs text-red-200 font-medium leading-relaxed whitespace-pre-line">
+                {error}
+              </p>
+              <button
                 onClick={() => window.location.reload()}
                 className="text-[10px] font-bold text-white underline underline-offset-4 uppercase tracking-widest"
               >
@@ -309,18 +350,23 @@ const ISBNScanner = ({ onScan, onClose }: { onScan: (isbn: string) => void; onCl
           {isStarted && (
             <div className="absolute inset-0 pointer-events-none border-[20px] border-black/40">
               <div className="w-full h-full border border-white/20 rounded-xl relative">
-                <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-white"></div>
-                <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-white"></div>
-                <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-white"></div>
-                <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-white"></div>
+                <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-white/30"></div>
+                <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-white/30"></div>
+                <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-white/30"></div>
+                <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-white/30"></div>
                 <div className="absolute top-1/2 left-0 w-full h-[1px] bg-red-500/30 animate-pulse"></div>
               </div>
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-center space-x-2 text-[9px] text-zinc-600 font-bold uppercase tracking-[0.3em]">
-          <div className={cn("w-1.5 h-1.5 rounded-full", isStarted ? "bg-green-500 animate-pulse" : "bg-zinc-800")}></div>
+        <div className="flex items-center justify-center space-x-2 text-[9px] text-zinc-500 font-bold uppercase tracking-[0.3em]">
+          <div
+            className={cn(
+              "w-1.5 h-1.5 rounded-full",
+              isStarted ? "bg-green-500 animate-pulse" : "bg-zinc-800",
+            )}
+          ></div>
           <span>{isStarted ? "System Active" : "Standby Mode"}</span>
         </div>
       </div>
@@ -339,11 +385,17 @@ const AuthScreen = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900 via-black to-black">
-      <motion.div 
+    <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden">
+      {/* Dynamic Background Effects */}
+      <div className="absolute inset-0 pointer-events-none z-[0] overflow-hidden">
+        <div className="absolute top-[-20%] left-[-10%] w-[70vw] h-[70vw] bg-purple-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50 animate-pulse-slow"></div>
+        <div className="absolute bottom-[-20%] right-[-10%] w-[70vw] h-[70vw] bg-red-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50 animate-pulse-slow delay-1000"></div>
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] mix-blend-overlay"></div>
+      </div>
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="text-center space-y-8 max-w-md w-full"
+        className="text-center space-y-8 max-w-md w-full relative z-10"
       >
         <div className="space-y-4">
           <div className="flex justify-center">
@@ -353,7 +405,9 @@ const AuthScreen = () => {
             <h1 className="text-6xl font-serif font-bold text-white tracking-tighter">
               Nerd<span className="text-red-700">Shelf</span>
             </h1>
-            <p className="text-zinc-400 text-lg font-light">Your personal sanctuary for classics, manga, and epic quests.</p>
+            <p className="text-zinc-500 text-lg font-light">
+              Your personal sanctuary for classics, manga, and epic quests.
+            </p>
           </div>
         </div>
 
@@ -363,46 +417,96 @@ const AuthScreen = () => {
             <Sparkles className="w-8 h-8 text-purple-600" />
             <Sword className="w-8 h-8 text-red-700" />
           </div>
-          
-          <button 
+
+          <button
             onClick={handleLogin}
-            className="w-full py-4 px-6 bg-white text-black font-semibold rounded-2xl hover:bg-zinc-200 transition-all flex items-center justify-center space-x-3 shadow-xl"
+            className="w-full py-4 px-6 bg-white text-zinc-900 font-semibold rounded-2xl hover:bg-white/10 transition-all flex items-center justify-center space-x-3 shadow-xl"
           >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+            <img
+              src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+              className="w-5 h-5"
+              alt="Google"
+            />
             <span>Enter the Library</span>
           </button>
-          
-          <p className="text-xs text-zinc-500 uppercase tracking-widest">Secure Multi-User Access</p>
+
+          <p className="text-xs text-zinc-500 uppercase tracking-widest">
+            Secure Multi-User Access
+          </p>
         </div>
       </motion.div>
     </div>
   );
 };
 
-const CategoryChip = ({ 
-  label, 
-  active, 
-  onClick, 
-  colorClass 
-}: { 
-  label: string; 
-  active: boolean; 
+const CategoryChip = ({
+  label,
+  active,
+  onClick,
+  colorClass,
+}: {
+  label: string;
+  active: boolean;
   onClick: () => void;
   colorClass: string;
 }) => (
   <button
     onClick={onClick}
     className={cn(
-      "px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap border border-white/5",
-      active ? colorClass : "bg-white/5 text-zinc-400 hover:bg-white/10"
+      "px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap border border-white/10",
+      active ? colorClass : "bg-white/5 text-zinc-500 hover:bg-white/10",
     )}
   >
     {label}
   </button>
 );
 
-const ItemCard = ({ item, onOpenDetails, isSelected, onSelect, selectionMode }: { 
-  item: LibraryItem; 
+const StarRating = ({
+  rating,
+  setRating,
+  readonly = false,
+}: {
+  rating: number;
+  setRating?: (rating: number) => void;
+  readonly?: boolean;
+}) => {
+  return (
+    <div className="flex items-center space-x-1">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          disabled={readonly}
+          onClick={() => setRating?.(star === rating ? 0 : star)}
+          className={cn(
+            "p-1 transition-all",
+            readonly ? "cursor-default" : "cursor-pointer hover:scale-110",
+            star <= rating
+              ? "text-amber-400"
+              : "text-zinc-600 hover:text-zinc-400",
+          )}
+        >
+          <Sparkles
+            className={cn(
+              "w-4 h-4",
+              star <= rating &&
+                "fill-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]",
+            )}
+          />
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const ItemCard = ({
+  item,
+  onOpenDetails,
+  isSelected,
+  onSelect,
+  selectionMode,
+}: {
+  item: LibraryItem;
   onOpenDetails: (item: LibraryItem) => void;
   key?: React.Key;
   isSelected?: boolean;
@@ -410,16 +514,34 @@ const ItemCard = ({ item, onOpenDetails, isSelected, onSelect, selectionMode }: 
   selectionMode?: boolean;
 }) => {
   const categoryConfig = {
-    book: { icon: Book, color: 'text-amber-600', border: 'category-book', label: 'Classic' },
-    manga: { icon: Sparkles, color: 'text-purple-600', border: 'category-manga', label: 'Manga' },
-    gdr: { icon: Sword, color: 'text-red-700', border: 'category-gdr', label: 'RPG' }
+    book: {
+      icon: Book,
+      color: "text-amber-600",
+      progressColor: "bg-amber-600 shadow-[0_0_8px_rgba(217,119,6,0.8)]",
+      border: "category-book",
+      label: "Classic",
+    },
+    manga: {
+      icon: Sparkles,
+      color: "text-purple-600",
+      progressColor: "bg-purple-600 shadow-[0_0_8px_rgba(147,51,234,0.8)]",
+      border: "category-manga",
+      label: "Manga",
+    },
+    gdr: {
+      icon: Sword,
+      color: "text-red-700",
+      progressColor: "bg-red-700 shadow-[0_0_8px_rgba(185,28,28,0.8)]",
+      border: "category-gdr",
+      label: "RPG",
+    },
   };
 
   const config = categoryConfig[item.category];
   const Icon = config.icon;
 
   return (
-    <motion.div 
+    <motion.div
       layout
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
@@ -427,12 +549,12 @@ const ItemCard = ({ item, onOpenDetails, isSelected, onSelect, selectionMode }: 
       whileHover={{ y: -5 }}
       onClick={() => selectionMode && onSelect?.(item.id)}
       className={cn(
-        "glass-card p-4 rounded-2xl flex flex-row sm:flex-col items-center sm:items-stretch space-x-4 sm:space-x-0 sm:space-y-4 group relative overflow-hidden cursor-pointer", 
+        "glass-card p-4 rounded-2xl flex flex-row sm:flex-col items-center sm:items-stretch space-x-4 sm:space-x-0 sm:space-y-4 group relative overflow-hidden cursor-pointer",
         config.border,
-        isSelected && "ring-2 ring-white border-white/40 bg-white/10"
+        isSelected && "ring-2 ring-white/50 border-white/30/40 bg-white/10",
       )}
     >
-      <button 
+      <button
         onClick={(e) => {
           if (selectionMode) {
             onSelect?.(item.id);
@@ -441,22 +563,33 @@ const ItemCard = ({ item, onOpenDetails, isSelected, onSelect, selectionMode }: 
           }
           e.stopPropagation();
         }}
-        className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] flex-shrink-0 bg-zinc-800/50 rounded-lg overflow-hidden relative hover:scale-[1.02] transition-transform active:scale-95 shadow-xl border border-white/5"
+        className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] flex-shrink-0 bg-black/40 rounded-xl overflow-hidden relative shadow-2xl border border-white/10 group-hover:border-white/20 transition-all"
       >
         {item.coverUrl ? (
-          <img 
-            src={item.coverUrl} 
-            alt={item.title} 
-            className="w-full h-full object-cover"
-            referrerPolicy="no-referrer"
-          />
+          <>
+            <img
+              src={item.coverUrl}
+              alt={item.title}
+              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+              referrerPolicy="no-referrer"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-60 group-hover:opacity-40 transition-opacity" />
+          </>
         ) : (
-          <div className={cn("w-full h-full flex items-center justify-center", config.color)}>
-            <Icon className="w-10 h-10 sm:w-12 sm:h-12 opacity-20" />
+          <div
+            className={cn(
+              "w-full h-full flex flex-col items-center justify-center space-y-2 bg-black/60",
+              config.color,
+            )}
+          >
+            <div className="p-3 bg-white/5 rounded-full border border-white/10 shadow-xl backdrop-blur-md relative z-10">
+              <Icon className="w-6 h-6 sm:w-8 sm:h-8 opacity-60 drop-shadow-lg" />
+            </div>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
           </div>
         )}
         {item.loanedTo && (
-          <div className="absolute top-2 left-2 bg-amber-500 text-black text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded shadow-lg">
+          <div className="absolute top-2 left-2 bg-amber-500 text-white text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded shadow-lg">
             Loaned
           </div>
         )}
@@ -466,30 +599,42 @@ const ItemCard = ({ item, onOpenDetails, isSelected, onSelect, selectionMode }: 
           </div>
         )}
         {selectionMode && (
-          <div className={cn(
-            "absolute inset-0 flex items-center justify-center transition-all",
-            isSelected ? "bg-white/20" : "bg-black/40 opacity-0 group-hover:opacity-100"
-          )}>
-            <div className={cn(
-              "w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all",
-              isSelected ? "bg-white border-white text-black" : "border-white/50 text-transparent"
-            )}>
+          <div
+            className={cn(
+              "absolute inset-0 flex items-center justify-center transition-all",
+              isSelected
+                ? "bg-white/20"
+                : "bg-white/5 opacity-0 group-hover:opacity-100",
+            )}
+          >
+            <div
+              className={cn(
+                "w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all",
+                isSelected
+                  ? "bg-zinc-900 border-white/30 text-white"
+                  : "border-white/100 text-transparent",
+              )}
+            >
               <CheckCircle2 className="w-5 h-5" />
             </div>
           </div>
         )}
       </button>
-      
+
       <div className="flex-1 min-w-0 flex flex-col justify-between h-full sm:min-h-[100px]">
         <div className="flex justify-between items-start gap-2">
           <div className="min-w-0">
-            <h3 className="text-base font-medium text-white leading-tight line-clamp-2 sm:h-10">{item.title}</h3>
+            <h3 className="text-base font-medium text-white leading-tight line-clamp-2 sm:h-10">
+              {item.title}
+            </h3>
             {/* Mobile Author */}
-            <p className="text-xs text-zinc-500 truncate sm:hidden mt-1">{item.author}</p>
+            <p className="text-xs text-zinc-500 truncate sm:hidden mt-1">
+              {item.author}
+            </p>
           </div>
           {/* Mobile Volume Badge */}
           <div className="sm:hidden">
-            {item.category === 'manga' && item.totalVolumes && (
+            {item.category === "manga" && item.totalVolumes && (
               <span className="text-[9px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30 shrink-0">
                 Vol. {item.totalVolumes}
               </span>
@@ -498,57 +643,122 @@ const ItemCard = ({ item, onOpenDetails, isSelected, onSelect, selectionMode }: 
         </div>
 
         {/* Desktop Footer / Bottom Row */}
-        <div className="flex items-center justify-between mt-auto pt-2">
-          <p className="text-xs text-zinc-500 truncate flex-1 mr-2 hidden sm:block">{item.author}</p>
-          
-          {/* Desktop Volume Badge */}
-          <div className="hidden sm:block">
-            {item.category === 'manga' && item.totalVolumes && (
-              <span className="text-[9px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30 shrink-0">
-                Vol. {item.totalVolumes}
+        <div className="flex flex-col mt-auto pt-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-zinc-500 truncate flex-1 mr-2 hidden sm:block">
+              {item.author}
+            </p>
+
+            <div className="hidden sm:flex items-center space-x-2">
+              <span
+                className={cn(
+                  "text-[9px] uppercase tracking-widest font-bold",
+                  config.color,
+                )}
+              >
+                {config.label}
               </span>
+              {item.category === "manga" && item.totalVolumes && (
+                <span className="text-[9px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30 shrink-0">
+                  Vol. {item.totalVolumes}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between mt-1">
+            {item.rating ? (
+              <div className="flex items-center space-x-0.5">
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <Sparkles
+                    key={star}
+                    className={cn(
+                      "w-3 h-3",
+                      star <= item.rating!
+                        ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]"
+                        : "text-white/10",
+                    )}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div />
+            )}
+            {item.tags && item.tags.length > 0 && (
+              <div className="hidden sm:flex items-center space-x-1 shrink-0 ml-2">
+                <span className="bg-white/5 border border-white/10 text-zinc-400 text-[8px] px-1.5 py-0.5 rounded uppercase tracking-widest truncate max-w-[60px]">
+                  {item.tags[0]}
+                </span>
+                {item.tags.length > 1 && (
+                  <span className="text-zinc-600 text-[8px]">
+                    +{item.tags.length - 1}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>
-        
-        {item.totalPages && item.totalPages > 0 && (
-          <div className="mt-3 w-full bg-white/5 h-1 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-white/20 transition-all" 
-              style={{ width: `${Math.min(100, ((item.pagesRead || 0) / item.totalPages) * 100)}%` }}
-            />
+
+        {item.totalPages && item.totalPages > 0 ? (
+          <div className="mt-3 space-y-1">
+            <div className="flex justify-between items-center text-[10px] uppercase font-bold tracking-widest px-0.5">
+              <span className="text-zinc-600">Progress</span>
+              <span className="text-zinc-400">
+                {Math.round(((item.pagesRead || 0) / item.totalPages) * 100)}%
+              </span>
+            </div>
+            <div className="w-full bg-black/40 h-1.5 rounded-full overflow-hidden border border-white/5">
+              <div
+                className={cn(
+                  "h-full transition-all duration-700 ease-out",
+                  config.progressColor,
+                )}
+                style={{
+                  width: `${Math.min(100, ((item.pagesRead || 0) / item.totalPages) * 100)}%`,
+                }}
+              />
+            </div>
           </div>
-        )}
+        ) : null}
       </div>
     </motion.div>
   );
 };
 
-const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] }: { 
-  isOpen: boolean; 
-  onClose: () => void; 
+const ItemModal = ({
+  isOpen,
+  onClose,
+  onSave,
+  initialData,
+  existingAuthors = [],
+}: {
+  isOpen: boolean;
+  onClose: () => void;
   onSave: (data: any) => void;
   initialData?: LibraryItem | null;
   existingAuthors?: string[];
 }) => {
   const [formData, setFormData] = useState({
-    title: '',
-    author: '',
-    category: 'book' as Category,
-    status: 'unread' as Status,
-    genre: '',
-    price: '' as string | number,
-    isbn: '',
-    totalVolumes: '',
-    system: '',
-    totalPages: '' as string | number,
-    pagesRead: '' as string | number,
-    coverUrl: '',
+    title: "",
+    author: "",
+    category: "book" as Category,
+    status: "unread" as Status,
+    genre: "",
+    price: "" as string | number,
+    isbn: "",
+    totalVolumes: "",
+    system: "",
+    totalPages: "" as string | number,
+    pagesRead: "" as string | number,
+    coverUrl: "",
     isWishlist: false,
-    seriesName: '',
-    loanedTo: '',
+    seriesName: "",
+    loanedTo: "",
     loanDate: null as any,
-    description: ''
+    description: "",
+    rating: 0,
+    review: "",
+    tags: [] as string[],
   });
 
   const [coverResults, setCoverResults] = useState<CoverResult[]>([]);
@@ -562,10 +772,10 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
     setIsSearching(true);
     try {
       let results: CoverResult[] = [];
-      if (formData.category === 'manga') {
+      if (formData.category === "manga") {
         const [aniList, mangaDex] = await Promise.all([
           searchAniList(formData.title),
-          searchMangaDex(formData.title)
+          searchMangaDex(formData.title),
         ]);
         results = [...aniList, ...mangaDex];
       } else {
@@ -582,43 +792,46 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
   useEffect(() => {
     if (initialData) {
       setFormData({
-        title: initialData.title || '',
-        author: initialData.author || '',
-        category: initialData.category || 'book',
-        status: initialData.status || 'unread',
-        genre: initialData.genre || '',
-        price: initialData.price ?? '',
-        isbn: initialData.isbn || '',
-        totalVolumes: initialData.totalVolumes || '',
-        system: initialData.system || '',
-        totalPages: initialData.totalPages ?? '',
-        pagesRead: initialData.pagesRead ?? '',
-        coverUrl: initialData.coverUrl || '',
+        title: initialData.title || "",
+        author: initialData.author || "",
+        category: initialData.category || "book",
+        status: initialData.status || "unread",
+        genre: initialData.genre || "",
+        price: initialData.price ?? "",
+        isbn: initialData.isbn || "",
+        totalVolumes: initialData.totalVolumes || "",
+        system: initialData.system || "",
+        totalPages: initialData.totalPages ?? "",
+        pagesRead: initialData.pagesRead ?? "",
+        coverUrl: initialData.coverUrl || "",
         isWishlist: initialData.isWishlist || false,
-        seriesName: initialData.seriesName || '',
-        loanedTo: initialData.loanedTo || '',
+        seriesName: initialData.seriesName || "",
+        loanedTo: initialData.loanedTo || "",
         loanDate: initialData.loanDate || null,
-        description: initialData.description || ''
+        description: initialData.description || "",
+        rating: initialData.rating || 0,
+        review: initialData.review || "",
+        tags: initialData.tags || [],
       });
     } else {
       setFormData({
-        title: '',
-        author: '',
-        category: 'book',
-        status: 'unread',
-        genre: '',
-        price: '',
-        isbn: '',
-        totalVolumes: '',
-        system: '',
-        totalPages: '',
-        pagesRead: '',
-        coverUrl: '',
+        title: "",
+        author: "",
+        category: "book",
+        status: "unread",
+        genre: "",
+        price: "",
+        isbn: "",
+        totalVolumes: "",
+        system: "",
+        totalPages: "",
+        pagesRead: "",
+        coverUrl: "",
         isWishlist: false,
-        seriesName: '',
-        loanedTo: '',
+        seriesName: "",
+        loanedTo: "",
         loanDate: null,
-        description: ''
+        description: "",
       });
     }
   }, [initialData, isOpen]);
@@ -626,18 +839,22 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
   const fetchMetadata = async (isbn: string) => {
     try {
       setIsSearching(true);
-      const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+      const res = await fetch(
+        `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`,
+      );
       const data = await res.json();
       if (data.items && data.items.length > 0) {
         const info = data.items[0].volumeInfo;
-        setFormData(prev => ({
+        setFormData((prev) => ({
           ...prev,
           title: info.title || prev.title,
-          author: info.authors ? info.authors.join(', ') : prev.author,
+          author: info.authors ? info.authors.join(", ") : prev.author,
           totalPages: info.pageCount || prev.totalPages,
-          coverUrl: info.imageLinks ? info.imageLinks.thumbnail.replace('http:', 'https:') : prev.coverUrl,
+          coverUrl: info.imageLinks
+            ? info.imageLinks.thumbnail.replace("http:", "https:")
+            : prev.coverUrl,
           description: info.description || prev.description,
-          isbn: isbn
+          isbn: isbn,
         }));
       }
     } catch (error) {
@@ -653,10 +870,10 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
       const start = Math.min(bulkRange.start, bulkRange.end);
       const end = Math.max(bulkRange.start, bulkRange.end);
       for (let v = start; v <= end; v++) {
-        onSave({ 
-          ...formData, 
+        onSave({
+          ...formData,
           title: formData.title,
-          totalVolumes: v.toString()
+          totalVolumes: v.toString(),
         });
       }
     } else {
@@ -668,55 +885,69 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
   if (!isOpen) return null;
 
   return (
-    <div 
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/90 backdrop-blur-md"
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-white/90 backdrop-blur-md"
       onKeyDown={(e) => {
-        if (e.key === 'Enter' && !e.shiftKey && formData.title) {
+        if (e.key === "Enter" && !e.shiftKey && formData.title) {
           handleSave();
         }
       }}
     >
-      <motion.div 
+      <motion.div
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
         className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-t-[2rem] sm:rounded-[2rem] p-6 space-y-5 max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl"
       >
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-serif font-bold text-white">
-            {initialData ? 'Edit Treasure' : 'New Treasure'}
+            {initialData ? "Edit Treasure" : "New Treasure"}
           </h2>
           <div className="flex items-center space-x-2">
-            <button 
+            <button
               onClick={() => setShowScanner(true)}
-              className="p-2 bg-white/5 border border-white/10 rounded-xl text-zinc-400 hover:text-white transition-all"
+              className="p-2 bg-white/5 border border-white/10 rounded-xl text-zinc-500 hover:text-white transition-all"
               title="Scan ISBN"
             >
               <Scan className="w-5 h-5" />
             </button>
-            <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+            <button
+              onClick={onClose}
+              className="p-2 text-zinc-500 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
         </div>
 
-        {showScanner && <ISBNScanner onScan={fetchMetadata} onClose={() => setShowScanner(false)} />}
+        {showScanner && (
+          <ISBNScanner
+            onScan={fetchMetadata}
+            onClose={() => setShowScanner(false)}
+          />
+        )}
 
         <div className="space-y-4">
-          {formData.category === 'manga' && !initialData && (
-            <div className="flex items-center justify-between p-3 bg-white/5 rounded-2xl border border-white/5">
+          {formData.category === "manga" && !initialData && (
+            <div className="flex items-center justify-between p-3 bg-white/5 rounded-2xl border border-white/10">
               <div className="flex items-center space-x-2">
                 <Layers className="w-4 h-4 text-purple-500" />
-                <span className="text-xs font-bold text-white uppercase tracking-widest">Bulk Add Mode</span>
+                <span className="text-xs font-bold text-white uppercase tracking-widest">
+                  Bulk Add Mode
+                </span>
               </div>
-              <button 
+              <button
                 onClick={() => setIsBulkMode(!isBulkMode)}
                 className={cn(
                   "w-10 h-5 rounded-full transition-all relative",
-                  isBulkMode ? "bg-purple-600" : "bg-zinc-700"
+                  isBulkMode ? "bg-purple-600" : "bg-zinc-700",
                 )}
               >
-                <div className={cn(
-                  "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
-                  isBulkMode ? "right-1" : "left-1"
-                )} />
+                <div
+                  className={cn(
+                    "absolute top-1 w-3 h-3 bg-zinc-900 rounded-full transition-all",
+                    isBulkMode ? "right-1" : "left-1",
+                  )}
+                />
               </button>
             </div>
           )}
@@ -724,33 +955,54 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
           {isBulkMode && (
             <div className="grid grid-cols-2 gap-4 p-4 bg-purple-900/10 rounded-2xl border border-purple-500/20">
               <div className="space-y-1">
-                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Start Volume</label>
-                <input 
+                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                  Start Volume
+                </label>
+                <input
                   type="number"
                   className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none"
                   value={bulkRange.start}
-                  onChange={e => setBulkRange({ ...bulkRange, start: parseInt(e.target.value) || 1 })}
+                  onChange={(e) =>
+                    setBulkRange({
+                      ...bulkRange,
+                      start: parseInt(e.target.value) || 1,
+                    })
+                  }
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">End Volume</label>
-                <input 
+                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                  End Volume
+                </label>
+                <input
                   type="number"
                   className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none"
                   value={bulkRange.end}
-                  onChange={e => setBulkRange({ ...bulkRange, end: parseInt(e.target.value) || 1 })}
+                  onChange={(e) =>
+                    setBulkRange({
+                      ...bulkRange,
+                      end: parseInt(e.target.value) || 1,
+                    })
+                  }
                 />
               </div>
               <p className="col-span-2 text-[10px] text-purple-400 italic text-center">
-                This will create {Math.max(0, bulkRange.end - bulkRange.start + 1)} volumes automatically.
+                This will create{" "}
+                {Math.max(0, bulkRange.end - bulkRange.start + 1)} volumes
+                automatically.
               </p>
             </div>
           )}
 
           <div className="flex space-x-4">
-            <div className="w-20 h-28 flex-shrink-0 bg-zinc-800/50 rounded-xl overflow-hidden border border-white/10">
+            <div className="w-20 h-28 flex-shrink-0 bg-black/40 rounded-xl overflow-hidden border border-white/10">
               {formData.coverUrl ? (
-                <img src={formData.coverUrl} className="w-full h-full object-contain" alt="Preview" referrerPolicy="no-referrer" />
+                <img
+                  src={formData.coverUrl}
+                  className="w-full h-full object-contain"
+                  alt="Preview"
+                  referrerPolicy="no-referrer"
+                />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-zinc-700">
                   <Book className="w-6 h-6" />
@@ -759,46 +1011,59 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
             </div>
             <div className="flex-1 space-y-2">
               <div className="space-y-1">
-                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Title</label>
-                <input 
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                  Title
+                </label>
+                <input
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
                   placeholder="Title..."
                   value={formData.title}
-                  onChange={e => setFormData({ ...formData, title: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, title: e.target.value })
+                  }
                 />
               </div>
-              <button 
+              <button
                 onClick={searchCovers}
                 disabled={!formData.title || isSearching}
                 className="text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors flex items-center space-x-1"
               >
                 <Search className="w-3 h-3" />
-                <span>{isSearching ? 'Searching...' : 'Search Covers'}</span>
+                <span>{isSearching ? "Searching..." : "Search Covers"}</span>
               </button>
             </div>
           </div>
 
           {coverResults.length > 0 && (
             <div className="space-y-2">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Select Cover</label>
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                Select Cover
+              </label>
               <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                 {coverResults.map((res, i) => (
-                  <button 
+                  <button
                     key={i}
                     onClick={() => {
-                      setFormData({ 
-                        ...formData, 
-                        coverUrl: res.coverUrl, 
+                      setFormData({
+                        ...formData,
+                        coverUrl: res.coverUrl,
                         author: res.author || formData.author,
-                        description: res.description || formData.description
+                        description: res.description || formData.description,
                       });
                       setCoverResults([]);
                     }}
                     className="relative flex-shrink-0 w-20 h-28 rounded-lg overflow-hidden border-2 border-transparent hover:border-blue-500 transition-all"
                   >
-                    <img src={res.coverUrl} className="w-full h-full object-cover" alt="Result" referrerPolicy="no-referrer" />
-                    <div className="absolute inset-0 bg-black/40 flex items-end p-1">
-                      <span className="text-[7px] text-white font-bold truncate">{res.source}</span>
+                    <img
+                      src={res.coverUrl}
+                      className="w-full h-full object-cover"
+                      alt="Result"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="absolute inset-0 bg-white/5 flex items-end p-1">
+                      <span className="text-[7px] text-white font-bold truncate">
+                        {res.source}
+                      </span>
                     </div>
                   </button>
                 ))}
@@ -807,96 +1072,139 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
           )}
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Series Name (Optional)</label>
-            <input 
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Series Name (Optional)
+            </label>
+            <input
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
               placeholder="e.g. One Piece, Harry Potter..."
               value={formData.seriesName}
-              onChange={e => setFormData({ ...formData, seriesName: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, seriesName: e.target.value })
+              }
             />
           </div>
 
           <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
             <div className="flex items-center space-x-3">
-              <Heart className={cn("w-5 h-5", formData.isWishlist ? "text-red-500 fill-red-500" : "text-zinc-600")} />
+              <Heart
+                className={cn(
+                  "w-5 h-5",
+                  formData.isWishlist
+                    ? "text-red-500 fill-red-500"
+                    : "text-zinc-500",
+                )}
+              />
               <div>
                 <p className="text-xs font-bold text-white">Add to Wishlist</p>
-                <p className="text-[10px] text-zinc-500">Items you want to buy later</p>
+                <p className="text-[10px] text-zinc-500">
+                  Items you want to buy later
+                </p>
               </div>
             </div>
-            <button 
-              onClick={() => setFormData({ ...formData, isWishlist: !formData.isWishlist })}
+            <button
+              onClick={() =>
+                setFormData({ ...formData, isWishlist: !formData.isWishlist })
+              }
               className={cn(
                 "w-10 h-5 rounded-full transition-all relative",
-                formData.isWishlist ? "bg-red-600" : "bg-zinc-700"
+                formData.isWishlist ? "bg-red-600" : "bg-zinc-700",
               )}
             >
-              <div className={cn(
-                "absolute top-1 w-3 h-3 bg-white rounded-full transition-all",
-                formData.isWishlist ? "left-6" : "left-1"
-              )} />
+              <div
+                className={cn(
+                  "absolute top-1 w-3 h-3 bg-zinc-900 rounded-full transition-all",
+                  formData.isWishlist ? "left-6" : "left-1",
+                )}
+              />
             </button>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Pages Read</label>
-              <input 
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                Pages Read
+              </label>
+              <input
                 type="number"
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
                 placeholder="0"
                 value={formData.pagesRead}
-                onChange={e => setFormData({ ...formData, pagesRead: e.target.value === '' ? '' : parseInt(e.target.value) })}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    pagesRead:
+                      e.target.value === "" ? "" : parseInt(e.target.value),
+                  })
+                }
               />
             </div>
             <div className="space-y-1">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Total Pages</label>
-              <input 
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                Total Pages
+              </label>
+              <input
                 type="number"
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
                 placeholder="0"
                 value={formData.totalPages}
-                onChange={e => setFormData({ ...formData, totalPages: e.target.value === '' ? '' : parseInt(e.target.value) })}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    totalPages:
+                      e.target.value === "" ? "" : parseInt(e.target.value),
+                  })
+                }
               />
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Purchase Cost (€)</label>
-            <input 
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Purchase Cost (€)
+            </label>
+            <input
               type="number"
               step="0.01"
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
               placeholder="0.00"
               value={formData.price}
-              onChange={e => setFormData({ ...formData, price: e.target.value === '' ? '' : parseFloat(e.target.value) })}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  price:
+                    e.target.value === "" ? "" : parseFloat(e.target.value),
+                })
+              }
             />
           </div>
 
           <div className="space-y-2">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Status</label>
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Status
+            </label>
             <div className="flex gap-2">
               {[
-                { id: 'unread', label: 'To Read' },
-                { id: 'reading', label: 'Reading' },
-                { id: 'read', label: 'Finished' }
-              ].map(s => (
+                { id: "unread", label: "To Read" },
+                { id: "reading", label: "Reading" },
+                { id: "read", label: "Finished" },
+              ].map((s) => (
                 <button
                   key={s.id}
                   type="button"
                   onClick={() => {
                     const newStatus = s.id as Status;
                     const updates: any = { status: newStatus };
-                    if (newStatus === 'read' && formData.totalPages) {
+                    if (newStatus === "read" && formData.totalPages) {
                       updates.pagesRead = formData.totalPages;
                     }
                     setFormData({ ...formData, ...updates });
                   }}
                   className={cn(
                     "flex-1 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-all",
-                    formData.status === s.id 
-                      ? "bg-white text-black border-white" 
-                      : "bg-white/5 border-white/5 text-zinc-500 hover:bg-white/10"
+                    formData.status === s.id
+                      ? "bg-white text-zinc-900 border-white/30"
+                      : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10",
                   )}
                 >
                   {s.label}
@@ -906,77 +1214,186 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Cover URL (Manual Fallback)</label>
-            <input 
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600"
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Cover URL (Manual Fallback)
+            </label>
+            <input
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
               placeholder="Paste image URL here..."
               value={formData.coverUrl}
-              onChange={e => setFormData({ ...formData, coverUrl: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, coverUrl: e.target.value })
+              }
             />
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Author / Publisher</label>
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Author / Publisher
+            </label>
             <div className="relative">
-              <input 
+              <input
                 className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20"
                 placeholder="Author..."
                 list="authors-list"
                 value={formData.author}
-                onChange={e => setFormData({ ...formData, author: e.target.value })}
+                onChange={(e) =>
+                  setFormData({ ...formData, author: e.target.value })
+                }
               />
               <datalist id="authors-list">
-                {Array.from(new Set(existingAuthors)).sort().map(author => (
-                  <option key={author} value={author} />
-                ))}
+                {Array.from(new Set(existingAuthors))
+                  .sort()
+                  .map((author) => (
+                    <option key={author} value={author} />
+                  ))}
               </datalist>
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Plot / Description</label>
-            <textarea 
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-600 min-h-[100px] resize-none"
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Plot / Description
+            </label>
+            <textarea
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[100px] resize-none"
               placeholder="Enter plot summary or description..."
               value={formData.description}
-              onChange={e => setFormData({ ...formData, description: e.target.value })}
+              onChange={(e) =>
+                setFormData({ ...formData, description: e.target.value })
+              }
             />
           </div>
 
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Custom Tags / Collections
+            </label>
+            <div className="relative">
+              <input
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20"
+                placeholder="Type and press Enter to add..."
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const val = e.currentTarget.value.trim();
+                    if (val && !(formData.tags || []).includes(val)) {
+                      setFormData({
+                        ...formData,
+                        tags: [...(formData.tags || []), val],
+                      });
+                      e.currentTarget.value = "";
+                    }
+                  }
+                }}
+              />
+              <div className="flex flex-wrap gap-2 mt-2">
+                {(formData.tags || []).map((tag) => (
+                  <span
+                    key={tag}
+                    className="bg-white/10 text-white text-xs px-2 py-1 rounded-md flex items-center gap-1"
+                  >
+                    {tag}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData({
+                          ...formData,
+                          tags: (formData.tags || []).filter((t) => t !== tag),
+                        })
+                      }
+                      className="hover:text-red-400"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4 pt-4 border-t border-white/10">
+            <div className="flex items-center justify-between">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                My Rating
+              </label>
+              <StarRating
+                rating={formData.rating}
+                setRating={(r) => setFormData({ ...formData, rating: r })}
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                Reader's Diary / Review
+              </label>
+              <textarea
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[80px] resize-none"
+                placeholder="What did you think? Notes after reading..."
+                value={formData.review}
+                onChange={(e) =>
+                  setFormData({ ...formData, review: e.target.value })
+                }
+              />
+            </div>
+          </div>
+
           <div className="grid grid-cols-3 gap-2">
-            {(['book', 'manga', 'gdr'] as Category[]).map(cat => (
+            {(["book", "manga", "gdr"] as Category[]).map((cat) => (
               <button
                 key={cat}
                 onClick={() => setFormData({ ...formData, category: cat })}
                 className={cn(
                   "p-2.5 rounded-xl border transition-all text-[9px] font-bold uppercase tracking-widest",
-                  formData.category === cat 
-                    ? (cat === 'gdr' ? 'bg-red-900/40 border-red-700 text-red-400' : cat === 'manga' ? 'bg-purple-900/40 border-purple-700 text-purple-400' : 'bg-amber-900/40 border-amber-700 text-amber-400')
-                    : "bg-white/5 border-white/10 text-zinc-500"
+                  formData.category === cat
+                    ? cat === "gdr"
+                      ? "bg-red-900/40 border-red-700 text-red-400"
+                      : cat === "manga"
+                        ? "bg-purple-900/40 border-purple-700 text-purple-400"
+                        : "bg-amber-900/40 border-amber-700 text-amber-400"
+                    : "bg-white/5 border-white/10 text-zinc-500",
                 )}
               >
-                {cat === 'gdr' ? 'RPG' : cat}
+                {cat === "gdr" ? "RPG" : cat}
               </button>
             ))}
           </div>
 
           {/* Conditional Fields */}
           <AnimatePresence mode="wait">
-            {formData.category === 'book' && (
-              <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-4">
+            {formData.category === "book" && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-4"
+              >
                 <div className="space-y-2">
-                  <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Select Genre</label>
+                  <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
+                    Select Genre
+                  </label>
                   <div className="grid grid-cols-2 gap-2">
-                    {["Horror", "Poetry", "Cookbook", "Novel", "Thriller", "Fantasy", "Sci-Fi", "Biography", "History", "Other"].map(g => (
+                    {[
+                      "Horror",
+                      "Poetry",
+                      "Cookbook",
+                      "Novel",
+                      "Thriller",
+                      "Fantasy",
+                      "Sci-Fi",
+                      "Biography",
+                      "History",
+                      "Other",
+                    ].map((g) => (
                       <button
                         key={g}
                         type="button"
                         onClick={() => setFormData({ ...formData, genre: g })}
                         className={cn(
                           "px-3 py-2 rounded-xl text-xs font-medium border transition-all text-left",
-                          formData.genre === g 
-                            ? "bg-white text-black border-white" 
-                            : "bg-white/5 border-white/5 text-zinc-400 hover:bg-white/10"
+                          formData.genre === g
+                            ? "bg-white text-zinc-900 border-white/30"
+                            : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10",
                         )}
                       >
                         {g}
@@ -985,47 +1402,73 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">ISBN</label>
-                  <input 
+                  <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
+                    ISBN
+                  </label>
+                  <input
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
                     placeholder="ISBN-13..."
                     value={formData.isbn}
-                    onChange={e => setFormData({ ...formData, isbn: e.target.value })}
+                    onChange={(e) =>
+                      setFormData({ ...formData, isbn: e.target.value })
+                    }
                   />
                 </div>
               </motion.div>
             )}
-            {formData.category === 'manga' && (
-              <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-1">
-                <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Volume Number</label>
-                <input 
+            {formData.category === "manga" && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-1"
+              >
+                <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
+                  Volume Number
+                </label>
+                <input
                   className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
                   placeholder="e.g. 1"
                   value={formData.totalVolumes}
-                  onChange={e => setFormData({ ...formData, totalVolumes: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, totalVolumes: e.target.value })
+                  }
                 />
               </motion.div>
             )}
-            {formData.category === 'gdr' && (
-              <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-1">
-                <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Edition / System</label>
-                <input 
+            {formData.category === "gdr" && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-1"
+              >
+                <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
+                  Edition / System
+                </label>
+                <input
                   className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
                   placeholder="D&D 5e, Pathfinder 2e, Cyberpunk RED..."
                   value={formData.system}
-                  onChange={e => setFormData({ ...formData, system: e.target.value })}
+                  onChange={(e) =>
+                    setFormData({ ...formData, system: e.target.value })
+                  }
                 />
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        <button 
+        <button
           disabled={!formData.title}
           onClick={handleSave}
-          className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all disabled:opacity-50"
+          className="w-full py-4 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-white/10 transition-all disabled:opacity-50"
         >
-          {initialData ? 'Update Collection' : isBulkMode ? `Bulk Add ${Math.max(0, bulkRange.end - bulkRange.start + 1)} Volumes` : 'Add to Collection'}
+          {initialData
+            ? "Update Collection"
+            : isBulkMode
+              ? `Bulk Add ${Math.max(0, bulkRange.end - bulkRange.start + 1)} Volumes`
+              : "Add to Collection"}
         </button>
       </motion.div>
     </div>
@@ -1033,38 +1476,62 @@ const ItemModal = ({ isOpen, onClose, onSave, initialData, existingAuthors = [] 
 };
 
 const Dashboard = ({ items }: { items: LibraryItem[] }) => {
-  const [filter, setFilter] = useState<Category | 'all'>('all');
+  const [filter, setFilter] = useState<string>("all");
   const [visibleCharts, setVisibleCharts] = useState({
     distribution: true,
-    value: true
+    value: true,
   });
 
   const filteredItems = useMemo(() => {
-    const collectionOnly = items.filter(i => !i.isWishlist);
-    return filter === 'all' ? collectionOnly : collectionOnly.filter(i => i.category === filter);
+    const collectionOnly = items.filter((i) => !i.isWishlist);
+    return filter === "all"
+      ? collectionOnly
+      : collectionOnly.filter((i) => i.category === filter);
   }, [items, filter]);
 
   const stats = useMemo(() => {
     const total = filteredItems.length;
-    const read = filteredItems.filter(i => i.status === 'read').length;
-    const reading = filteredItems.filter(i => i.status === 'reading').length;
-    const unread = filteredItems.filter(i => i.status === 'unread').length;
-    
-    const value = filteredItems.reduce((acc, curr) => acc + (curr.price || 0), 0);
+    const read = filteredItems.filter((i) => i.status === "read").length;
+    const reading = filteredItems.filter((i) => i.status === "reading").length;
+    const unread = filteredItems.filter((i) => i.status === "unread").length;
+
+    const value = filteredItems.reduce(
+      (acc, curr) => acc + (curr.price || 0),
+      0,
+    );
     const avgPrice = total > 0 ? value / total : 0;
-    
-    const totalPages = filteredItems.reduce((acc, curr) => acc + (Number(curr.totalPages) || 0), 0);
-    const pagesRead = filteredItems.reduce((acc, curr) => acc + (Number(curr.pagesRead) || 0), 0);
+
+    const totalPages = filteredItems.reduce(
+      (acc, curr) => acc + (Number(curr.totalPages) || 0),
+      0,
+    );
+    const pagesRead = filteredItems.reduce(
+      (acc, curr) => acc + (Number(curr.pagesRead) || 0),
+      0,
+    );
     const progressPercent = totalPages > 0 ? (pagesRead / totalPages) * 100 : 0;
-    
-    const mangaCount = filteredItems.filter(i => i.category === 'manga').length;
-    
-    return { total, read, reading, unread, value, avgPrice, totalPages, pagesRead, progressPercent, mangaCount };
+
+    const mangaCount = filteredItems.filter(
+      (i) => i.category === "manga",
+    ).length;
+
+    return {
+      total,
+      read,
+      reading,
+      unread,
+      value,
+      avgPrice,
+      totalPages,
+      pagesRead,
+      progressPercent,
+      mangaCount,
+    };
   }, [filteredItems]);
 
   const genreData = useMemo(() => {
     const counts: Record<string, number> = {};
-    filteredItems.forEach(item => {
+    filteredItems.forEach((item) => {
       if (item.genre) {
         counts[item.genre] = (counts[item.genre] || 0) + 1;
       }
@@ -1077,16 +1544,21 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
 
   const statusData = useMemo(() => {
     return [
-      { name: 'To Read', value: stats.unread, color: '#71717a' },
-      { name: 'Reading', value: stats.reading, color: '#60a5fa' },
-      { name: 'Finished', value: stats.read, color: '#22c55e' }
+      { name: "To Read", value: stats.unread, color: "#71717a" },
+      { name: "Reading", value: stats.reading, color: "#60a5fa" },
+      { name: "Finished", value: stats.read, color: "#22c55e" },
     ];
   }, [stats]);
 
   const categoryData = useMemo(() => {
     const counts: Record<string, number> = {};
-    filteredItems.forEach(item => {
-      const label = item.category === 'book' ? 'Books' : item.category === 'manga' ? 'Manga' : 'RPG';
+    filteredItems.forEach((item) => {
+      const label =
+        item.category === "book"
+          ? "Books"
+          : item.category === "manga"
+            ? "Manga"
+            : "RPG";
       counts[label] = (counts[label] || 0) + 1;
     });
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
@@ -1094,33 +1566,40 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
 
   const valueData = useMemo(() => {
     const values: Record<string, number> = {};
-    filteredItems.forEach(item => {
-      const label = item.category === 'book' ? 'Books' : item.category === 'manga' ? 'Manga' : 'RPG';
+    filteredItems.forEach((item) => {
+      const label =
+        item.category === "book"
+          ? "Books"
+          : item.category === "manga"
+            ? "Manga"
+            : "RPG";
       values[label] = (values[label] || 0) + (item.price || 0);
     });
     return Object.entries(values).map(([name, value]) => ({ name, value }));
   }, [filteredItems]);
 
-  const COLORS = ['#b45309', '#7e22ce', '#9b1c1c'];
+  const COLORS = ["#b45309", "#7e22ce", "#9b1c1c"];
 
   return (
     <div className="space-y-8 p-6 max-w-4xl mx-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h2 className="text-3xl font-serif font-bold text-white">Dashboard</h2>
-        <div className="flex items-center space-x-3">
-          <div className="flex bg-white/5 p-1 rounded-xl border border-white/5">
+        <div className="flex items-center space-x-3 w-full sm:w-auto overflow-hidden">
+          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10 overflow-x-auto no-scrollbar">
             {[
-              { id: 'all', label: 'All' },
-              { id: 'book', label: 'Books' },
-              { id: 'manga', label: 'Manga' },
-              { id: 'gdr', label: 'RPG' }
-            ].map(f => (
+              { id: "all", label: "All" },
+              { id: "book", label: "Books" },
+              { id: "manga", label: "Manga" },
+              { id: "gdr", label: "RPG" },
+            ].map((f) => (
               <button
                 key={f.id}
                 onClick={() => setFilter(f.id as any)}
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
-                  filter === f.id ? "bg-white text-black" : "text-zinc-500 hover:text-white"
+                  filter === f.id
+                    ? "bg-white text-zinc-900"
+                    : "text-zinc-500 hover:text-white",
                 )}
               >
                 {f.label}
@@ -1128,17 +1607,39 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
             ))}
           </div>
           <div className="relative group">
-            <button className="p-2 bg-white/5 border border-white/10 rounded-xl text-zinc-400 hover:text-white transition-all">
+            <button className="p-2 bg-white/5 border border-white/10 rounded-xl text-zinc-500 hover:text-white transition-all">
               <Filter className="w-5 h-5" />
             </button>
             <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-white/10 rounded-2xl p-4 shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-all z-50">
-              <p className="text-[10px] uppercase font-bold text-zinc-500 mb-3 tracking-widest">Toggle Charts</p>
+              <p className="text-[10px] uppercase font-bold text-zinc-500 mb-3 tracking-widest">
+                Toggle Charts
+              </p>
               <label className="flex items-center space-x-3 cursor-pointer mb-2">
-                <input type="checkbox" checked={visibleCharts.distribution} onChange={e => setVisibleCharts({...visibleCharts, distribution: e.target.checked})} className="accent-amber-600" />
+                <input
+                  type="checkbox"
+                  checked={visibleCharts.distribution}
+                  onChange={(e) =>
+                    setVisibleCharts({
+                      ...visibleCharts,
+                      distribution: e.target.checked,
+                    })
+                  }
+                  className="accent-amber-600"
+                />
                 <span className="text-xs text-zinc-300">Distribution</span>
               </label>
               <label className="flex items-center space-x-3 cursor-pointer">
-                <input type="checkbox" checked={visibleCharts.value} onChange={e => setVisibleCharts({...visibleCharts, value: e.target.checked})} className="accent-amber-600" />
+                <input
+                  type="checkbox"
+                  checked={visibleCharts.value}
+                  onChange={(e) =>
+                    setVisibleCharts({
+                      ...visibleCharts,
+                      value: e.target.checked,
+                    })
+                  }
+                  className="accent-amber-600"
+                />
                 <span className="text-xs text-zinc-300">Economic Value</span>
               </label>
             </div>
@@ -1149,20 +1650,36 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
       {/* KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="glass-card p-5 rounded-3xl border-l-4 border-amber-600">
-          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Total Items</p>
-          <p className="text-3xl font-serif font-bold text-white">{stats.total}</p>
+          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
+            Total Items
+          </p>
+          <p className="text-3xl font-serif font-bold text-white">
+            {stats.total}
+          </p>
         </div>
         <div className="glass-card p-5 rounded-3xl border-l-4 border-green-600">
-          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Finished</p>
-          <p className="text-3xl font-serif font-bold text-white">{stats.read}</p>
+          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
+            Finished
+          </p>
+          <p className="text-3xl font-serif font-bold text-white">
+            {stats.read}
+          </p>
         </div>
         <div className="glass-card p-5 rounded-3xl border-l-4 border-blue-600">
-          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Total Value</p>
-          <p className="text-3xl font-serif font-bold text-white">€{stats.value.toFixed(2)}</p>
+          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
+            Total Value
+          </p>
+          <p className="text-3xl font-serif font-bold text-white">
+            €{stats.value.toFixed(2)}
+          </p>
         </div>
         <div className="glass-card p-5 rounded-3xl border-l-4 border-purple-600">
-          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Avg. Price</p>
-          <p className="text-3xl font-serif font-bold text-white">€{stats.avgPrice.toFixed(2)}</p>
+          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
+            Avg. Price
+          </p>
+          <p className="text-3xl font-serif font-bold text-white">
+            €{stats.avgPrice.toFixed(2)}
+          </p>
         </div>
       </div>
 
@@ -1171,13 +1688,22 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
         <div className="glass-card p-6 rounded-3xl space-y-4">
           <div className="flex justify-between items-end">
             <div>
-              <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Reading Progress</p>
-              <p className="text-2xl font-serif font-bold text-white">{stats.pagesRead.toLocaleString()} <span className="text-sm text-zinc-500 font-sans">/ {stats.totalPages.toLocaleString()} pages</span></p>
+              <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
+                Reading Progress
+              </p>
+              <p className="text-2xl font-serif font-bold text-white">
+                {stats.pagesRead.toLocaleString()}{" "}
+                <span className="text-sm text-zinc-500 font-sans">
+                  / {stats.totalPages.toLocaleString()} pages
+                </span>
+              </p>
             </div>
-            <p className="text-2xl font-mono font-bold text-white">{Math.round(stats.progressPercent)}%</p>
+            <p className="text-2xl font-mono font-bold text-white">
+              {Math.round(stats.progressPercent)}%
+            </p>
           </div>
           <div className="w-full bg-white/5 h-2 rounded-full overflow-hidden">
-            <motion.div 
+            <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${stats.progressPercent}%` }}
               className="h-full bg-gradient-to-r from-amber-600 to-orange-400"
@@ -1186,8 +1712,12 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
         </div>
         <div className="glass-card p-6 rounded-3xl flex items-center justify-between">
           <div>
-            <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">Manga Collected</p>
-            <p className="text-4xl font-serif font-bold text-white">{stats.mangaCount}</p>
+            <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
+              Manga Collected
+            </p>
+            <p className="text-4xl font-serif font-bold text-white">
+              {stats.mangaCount}
+            </p>
           </div>
           <div className="p-4 bg-purple-900/20 rounded-2xl">
             <Sparkles className="w-8 h-8 text-purple-500" />
@@ -1198,8 +1728,14 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
       {/* Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {visibleCharts.distribution && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col">
-            <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">Category Distribution</h3>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-card p-6 rounded-3xl h-[350px] flex flex-col"
+          >
+            <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">
+              Category Distribution
+            </h3>
             <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -1213,12 +1749,21 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
                     dataKey="value"
                   >
                     {categoryData.map((entry) => (
-                      <Cell key={`cell-category-${entry.name}`} fill={COLORS[categoryData.indexOf(entry) % COLORS.length]} />
+                      <Cell
+                        key={`cell-category-${entry.name}`}
+                        fill={
+                          COLORS[categoryData.indexOf(entry) % COLORS.length]
+                        }
+                      />
                     ))}
                   </Pie>
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
-                    itemStyle={{ color: '#fff' }}
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#18181b",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: "12px",
+                    }}
+                    itemStyle={{ color: "#fff" }}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -1226,20 +1771,41 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
           </motion.div>
         )}
 
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col">
-          <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">Status Breakdown</h3>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card p-6 rounded-3xl h-[350px] flex flex-col"
+        >
+          <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">
+            Status Breakdown
+          </h3>
           <div className="flex-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={statusData} layout="vertical">
                 <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} width={70} />
-                <Tooltip 
-                  cursor={{ fill: 'transparent' }}
-                  contentStyle={{ backgroundColor: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                <YAxis
+                  dataKey="name"
+                  type="category"
+                  stroke="#52525b"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                  width={70}
+                />
+                <Tooltip
+                  cursor={{ fill: "transparent" }}
+                  contentStyle={{
+                    backgroundColor: "#18181b",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "12px",
+                  }}
                 />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                   {statusData.map((entry) => (
-                    <Cell key={`cell-status-${entry.name}`} fill={entry.color} />
+                    <Cell
+                      key={`cell-status-${entry.name}`}
+                      fill={entry.color}
+                    />
                   ))}
                 </Bar>
               </BarChart>
@@ -1248,16 +1814,37 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
         </motion.div>
 
         {visibleCharts.value && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col">
-            <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">Value by Category</h3>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="glass-card p-6 rounded-3xl h-[350px] flex flex-col"
+          >
+            <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">
+              Value by Category
+            </h3>
             <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={valueData}>
-                  <XAxis dataKey="name" stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
-                  <Tooltip 
-                    cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                    contentStyle={{ backgroundColor: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                  <XAxis
+                    dataKey="name"
+                    stroke="#52525b"
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    stroke="#52525b"
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip
+                    cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                    contentStyle={{
+                      backgroundColor: "#18181b",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: "12px",
+                    }}
                   />
                   <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -1266,16 +1853,37 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
           </motion.div>
         )}
 
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col lg:col-span-2">
-          <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">Top Genres</h3>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card p-6 rounded-3xl h-[350px] flex flex-col lg:col-span-2"
+        >
+          <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">
+            Top Genres
+          </h3>
           <div className="flex-1">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={genreData}>
-                <XAxis dataKey="name" stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
-                <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} />
-                <Tooltip 
-                  cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                  contentStyle={{ backgroundColor: '#18181b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                <XAxis
+                  dataKey="name"
+                  stroke="#52525b"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  stroke="#52525b"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                  contentStyle={{
+                    backgroundColor: "#18181b",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "12px",
+                  }}
                 />
                 <Bar dataKey="value" fill="#f59e0b" radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -1283,29 +1891,54 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
           </div>
         </motion.div>
 
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass-card p-6 rounded-3xl h-[350px] flex flex-col overflow-hidden">
-          <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest">Currently Reading</h3>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-card p-6 rounded-3xl h-[350px] flex flex-col overflow-hidden"
+        >
+          <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest">
+            Currently Reading
+          </h3>
           <div className="flex-1 overflow-y-auto no-scrollbar space-y-3">
-            {items.filter(i => i.status === 'reading').length > 0 ? (
-              items.filter(i => i.status === 'reading').map(item => (
-                <div key={item.id} className="flex items-center space-x-3 p-2 bg-white/5 rounded-xl border border-white/5">
-                  <div className="w-10 h-14 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
-                    {item.coverUrl && <img src={item.coverUrl} className="w-full h-full object-cover" alt="" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-white truncate">{item.title}</p>
-                    <p className="text-[10px] text-zinc-500 truncate">{item.author}</p>
-                    <div className="mt-1 w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-blue-500" 
-                        style={{ width: `${item.totalPages ? (Number(item.pagesRead) / Number(item.totalPages)) * 100 : 0}%` }}
-                      />
+            {items.filter((i) => i.status === "reading").length > 0 ? (
+              items
+                .filter((i) => i.status === "reading")
+                .map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center space-x-3 p-2 bg-white/5 rounded-xl border border-white/10"
+                  >
+                    <div className="w-10 h-14 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
+                      {item.coverUrl && (
+                        <img
+                          src={item.coverUrl}
+                          className="w-full h-full object-cover"
+                          alt=""
+                        />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-white truncate">
+                        {item.title}
+                      </p>
+                      <p className="text-[10px] text-zinc-500 truncate">
+                        {item.author}
+                      </p>
+                      <div className="mt-1 w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500"
+                          style={{
+                            width: `${item.totalPages ? (Number(item.pagesRead) / Number(item.totalPages)) * 100 : 0}%`,
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                ))
             ) : (
-              <p className="text-xs text-zinc-600 text-center py-10 italic">Nothing on the desk right now.</p>
+              <p className="text-xs text-zinc-500 text-center py-10 italic">
+                Nothing on the desk right now.
+              </p>
             )}
           </div>
         </motion.div>
@@ -1314,7 +1947,16 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
   );
 };
 
-const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, onUpdateLoan, onEdit, onDelete }: {
+const DetailsModal = ({
+  item,
+  isOpen,
+  onClose,
+  onUpdateStatus,
+  onUpdatePages,
+  onUpdateLoan,
+  onEdit,
+  onDelete,
+}: {
   item: LibraryItem | null;
   isOpen: boolean;
   onClose: () => void;
@@ -1327,79 +1969,126 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
   if (!item || !isOpen) return null;
 
   const categoryConfig = {
-    book: { icon: Book, color: 'text-amber-600', label: 'Classic' },
-    manga: { icon: Sparkles, color: 'text-purple-600', label: 'Manga' },
-    gdr: { icon: Sword, color: 'text-red-700', label: 'RPG' }
+    book: { icon: Book, color: "text-amber-600", label: "Classic" },
+    manga: { icon: Sparkles, color: "text-purple-600", label: "Manga" },
+    gdr: { icon: Sword, color: "text-red-700", label: "RPG" },
   };
 
   const statusConfig = {
-    unread: { icon: Clock, label: 'To Read', color: 'text-zinc-500' },
-    reading: { icon: BookOpen, label: 'Reading', color: 'text-blue-400' },
-    read: { icon: CheckCircle2, label: 'Finished', color: 'text-green-500' }
+    unread: { icon: Clock, label: "To Read", color: "text-zinc-500" },
+    reading: { icon: BookOpen, label: "Reading", color: "text-blue-400" },
+    read: { icon: CheckCircle2, label: "Finished", color: "text-green-500" },
   };
 
   const config = categoryConfig[item.category];
   const status = statusConfig[item.status];
   const Icon = config.icon;
-  const progress = item.totalPages ? Math.min(100, ((item.pagesRead || 0) / item.totalPages) * 100) : 0;
+  const progress = item.totalPages
+    ? Math.min(100, ((item.pagesRead || 0) / item.totalPages) * 100)
+    : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/90 backdrop-blur-md">
-      <motion.div 
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-white/90 backdrop-blur-md">
+      <motion.div
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
         className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-t-[2rem] sm:rounded-[2rem] p-6 space-y-5 max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl"
       >
         <div className="flex justify-between items-start">
           <div className="space-y-0.5">
-            <span className={cn("text-[9px] uppercase tracking-widest font-bold", config.color)}>{config.label}</span>
-            <h2 className="text-xl font-serif font-bold text-white leading-tight">{item.title}</h2>
-            <p className="text-sm text-zinc-400">{item.author}</p>
+            <span
+              className={cn(
+                "text-[9px] uppercase tracking-widest font-bold",
+                config.color,
+              )}
+            >
+              {config.label}
+            </span>
+            <h2 className="text-xl font-serif font-bold text-white leading-tight">
+              {item.title}
+            </h2>
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-zinc-500">{item.author}</p>
+              {item.rating ? (
+                <StarRating rating={item.rating} readonly={true} />
+              ) : null}
+            </div>
+            {item.tags && item.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {item.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="bg-white/5 border border-white/10 text-zinc-300 text-[10px] px-2 py-0.5 rounded-full"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center space-x-2">
-            <button 
+            <button
               onClick={() => {
                 onEdit(item);
                 onClose();
-              }} 
+              }}
               className="p-2 text-zinc-500 hover:text-white transition-all"
             >
               <Pencil className="w-5 h-5" />
             </button>
-            <button 
+            <button
               onClick={() => {
                 onDelete(item.id);
                 onClose();
-              }} 
+              }}
               className="p-2 text-zinc-500 hover:text-red-500 transition-all"
             >
               <Trash2 className="w-5 h-5" />
             </button>
-            <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+            <button
+              onClick={onClose}
+              className="p-2 text-zinc-500 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
         </div>
 
         <div className="flex space-x-5">
-          <div className="w-24 h-36 flex-shrink-0 bg-zinc-800/50 rounded-xl overflow-hidden border border-white/10 shadow-lg">
+          <div className="w-24 h-36 flex-shrink-0 bg-black/40 rounded-xl overflow-hidden border border-white/10 shadow-lg">
             {item.coverUrl ? (
-              <img src={item.coverUrl} className="w-full h-full object-contain" alt={item.title} referrerPolicy="no-referrer" />
+              <img
+                src={item.coverUrl}
+                className="w-full h-full object-contain"
+                alt={item.title}
+                referrerPolicy="no-referrer"
+              />
             ) : (
-              <div className={cn("w-full h-full flex items-center justify-center", config.color)}>
+              <div
+                className={cn(
+                  "w-full h-full flex items-center justify-center",
+                  config.color,
+                )}
+              >
                 <Icon className="w-10 h-10 opacity-20" />
               </div>
             )}
           </div>
           <div className="flex-1 space-y-4">
             <div className="space-y-2">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Status</label>
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                Status
+              </label>
               <div className="flex flex-wrap gap-1.5">
-                {(['unread', 'reading', 'read'] as Status[]).map(s => (
+                {(["unread", "reading", "read"] as Status[]).map((s) => (
                   <button
                     key={s}
                     onClick={() => onUpdateStatus(item.id, s)}
                     className={cn(
                       "px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-widest border transition-all",
-                      item.status === s ? "bg-white text-black border-white" : "bg-white/5 text-zinc-500 border-white/5 hover:bg-white/10"
+                      item.status === s
+                        ? "bg-white text-zinc-900 border-white/30"
+                        : "bg-white/5 text-zinc-500 border-white/10 hover:bg-white/10",
                     )}
                   >
                     {statusConfig[s].label}
@@ -1410,8 +2099,12 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
 
             {item.price !== undefined && (
               <div className="space-y-0.5">
-                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Value</label>
-                <p className="text-lg font-mono text-white">€{item.price.toFixed(2)}</p>
+                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+                  Value
+                </label>
+                <p className="text-lg font-mono text-white">
+                  €{item.price.toFixed(2)}
+                </p>
               </div>
             )}
           </div>
@@ -1419,9 +2112,22 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
 
         {item.description && (
           <div className="glass-card p-5 rounded-3xl space-y-2">
-            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Plot / Description</label>
+            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
+              Plot / Description
+            </label>
             <p className="text-zinc-300 text-xs leading-relaxed whitespace-pre-line max-h-40 overflow-y-auto no-scrollbar">
               {item.description}
+            </p>
+          </div>
+        )}
+
+        {item.review && (
+          <div className="glass-card p-5 rounded-3xl space-y-2 bg-purple-900/10 border-purple-500/20">
+            <label className="text-[10px] uppercase tracking-widest text-purple-400 font-bold">
+              Reader's Diary / Review
+            </label>
+            <p className="text-zinc-300 text-xs leading-relaxed whitespace-pre-line italic">
+              "{item.review}"
             </p>
           </div>
         )}
@@ -1429,28 +2135,45 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
         {/* Progress Section */}
         <div className="glass-card p-5 rounded-3xl space-y-3">
           <div className="flex justify-between items-center">
-            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Reading Progress</label>
-            <p className="text-xs font-mono text-zinc-400">
-              <span className="text-white font-bold">{item.pagesRead || 0}</span> / {item.totalPages || '?'} <span className="ml-1 text-[10px] opacity-50">({Math.round(progress)}%)</span>
+            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
+              Reading Progress
+            </label>
+            <p className="text-xs font-mono text-zinc-500">
+              <span className="text-white font-bold">
+                {item.pagesRead || 0}
+              </span>{" "}
+              / {item.totalPages || "?"}{" "}
+              <span className="ml-1 text-[10px] opacity-50">
+                ({Math.round(progress)}%)
+              </span>
             </p>
           </div>
-          
-          <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-            <motion.div 
+
+          <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden border border-white/5 shadow-inner">
+            <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${progress}%` }}
-              className="h-full bg-white transition-all" 
+              className={cn(
+                "h-full transition-all duration-700 ease-out",
+                item.category === "manga"
+                  ? "bg-purple-600 shadow-[0_0_8px_rgba(147,51,234,0.8)]"
+                  : item.category === "gdr"
+                    ? "bg-red-700 shadow-[0_0_8px_rgba(185,28,28,0.8)]"
+                    : "bg-amber-600 shadow-[0_0_8px_rgba(217,119,6,0.8)]",
+              )}
             />
           </div>
 
           <div className="flex items-center gap-3 pt-1">
-            <button 
-              onClick={() => onUpdatePages(item.id, Math.max(0, (item.pagesRead || 0) - 10))}
+            <button
+              onClick={() =>
+                onUpdatePages(item.id, Math.max(0, (item.pagesRead || 0) - 10))
+              }
               className="w-8 h-8 flex items-center justify-center bg-white/5 rounded-lg text-xs text-white hover:bg-white/10 active:scale-90 transition-all shrink-0"
             >
               -10
             </button>
-            <input 
+            <input
               type="range"
               min="0"
               max={item.totalPages || 1000}
@@ -1458,8 +2181,13 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
               onChange={(e) => onUpdatePages(item.id, parseInt(e.target.value))}
               className="flex-1 h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
             />
-            <button 
-              onClick={() => onUpdatePages(item.id, Math.min(item.totalPages || 1000, (item.pagesRead || 0) + 10))}
+            <button
+              onClick={() =>
+                onUpdatePages(
+                  item.id,
+                  Math.min(item.totalPages || 1000, (item.pagesRead || 0) + 10),
+                )
+              }
               className="w-8 h-8 flex items-center justify-center bg-white/5 rounded-lg text-xs text-white hover:bg-white/10 active:scale-90 transition-all shrink-0"
             >
               +10
@@ -1470,32 +2198,42 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
         {/* Info Grid */}
         <div className="grid grid-cols-2 gap-3">
           {item.genre && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">Genre</label>
+            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
+                Genre
+              </label>
               <p className="text-white text-xs">{item.genre}</p>
             </div>
           )}
           {item.isbn && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">ISBN</label>
+            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
+                ISBN
+              </label>
               <p className="text-white text-xs font-mono">{item.isbn}</p>
             </div>
           )}
           {item.totalVolumes && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">Volume</label>
+            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
+                Volume
+              </label>
               <p className="text-white text-xs">{item.totalVolumes}</p>
             </div>
           )}
           {item.system && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">System</label>
+            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
+                System
+              </label>
               <p className="text-white text-xs">{item.system}</p>
             </div>
           )}
           {item.seriesName && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/5">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">Series</label>
+            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
+                Series
+              </label>
               <p className="text-white text-xs">{item.seriesName}</p>
             </div>
           )}
@@ -1505,15 +2243,22 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
         <div className="glass-card p-5 rounded-3xl space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <Handshake className={cn("w-5 h-5", item.loanedTo ? "text-amber-500" : "text-zinc-600")} />
+              <Handshake
+                className={cn(
+                  "w-5 h-5",
+                  item.loanedTo ? "text-amber-500" : "text-zinc-500",
+                )}
+              />
               <div>
                 <p className="text-xs font-bold text-white">Loan Registry</p>
-                <p className="text-[10px] text-zinc-500">Track who borrowed this</p>
+                <p className="text-[10px] text-zinc-500">
+                  Track who borrowed this
+                </p>
               </div>
             </div>
             {item.loanedTo && (
-              <button 
-                onClick={() => onUpdateLoan(item.id, '', null)}
+              <button
+                onClick={() => onUpdateLoan(item.id, "", null)}
                 className="text-[10px] font-bold text-red-500 uppercase tracking-widest hover:underline"
               >
                 Return Item
@@ -1523,22 +2268,32 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
 
           {item.loanedTo ? (
             <div className="p-3 bg-amber-900/10 border border-amber-900/20 rounded-xl">
-              <p className="text-xs text-white">Loaned to <span className="font-bold text-amber-500">{item.loanedTo}</span></p>
-              <p className="text-[10px] text-zinc-500">Since {formatDate(item.loanDate)}</p>
+              <p className="text-xs text-white">
+                Loaned to{" "}
+                <span className="font-bold text-amber-500">
+                  {item.loanedTo}
+                </span>
+              </p>
+              <p className="text-[10px] text-zinc-500">
+                Since {formatDate(item.loanDate)}
+              </p>
             </div>
           ) : (
             <div className="flex space-x-2">
-              <input 
+              <input
                 id={`loan-input-${item.id}`}
                 className="flex-1 bg-white/5 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none focus:border-white/20"
                 placeholder="Friend's name..."
               />
-              <button 
+              <button
                 onClick={() => {
-                  const input = document.getElementById(`loan-input-${item.id}`) as HTMLInputElement;
-                  if (input.value) onUpdateLoan(item.id, input.value, new Date());
+                  const input = document.getElementById(
+                    `loan-input-${item.id}`,
+                  ) as HTMLInputElement;
+                  if (input.value)
+                    onUpdateLoan(item.id, input.value, new Date());
                 }}
-                className="px-4 bg-white text-black text-[10px] font-bold uppercase tracking-widest rounded-xl hover:bg-zinc-200"
+                className="px-4 bg-white text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-xl hover:bg-white/10"
               >
                 Loan
               </button>
@@ -1550,32 +2305,39 @@ const DetailsModal = ({ item, isOpen, onClose, onUpdateStatus, onUpdatePages, on
   );
 };
 
-const DeleteConfirmationModal = ({ isOpen, onConfirm, onCancel }: { 
-  isOpen: boolean; 
-  onConfirm: () => void; 
+const DeleteConfirmationModal = ({
+  isOpen,
+  onConfirm,
+  onCancel,
+}: {
+  isOpen: boolean;
+  onConfirm: () => void;
   onCancel: () => void;
 }) => {
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <motion.div 
+      <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         className="bg-zinc-900 border border-white/10 p-6 rounded-3xl max-w-sm w-full space-y-6 shadow-2xl"
       >
         <div className="space-y-2 text-center">
           <h3 className="text-xl font-bold text-white">Sei sicuro?</h3>
-          <p className="text-zinc-400 text-sm">Vuoi davvero eliminare questo elemento dalla tua libreria? L'azione è irreversibile.</p>
+          <p className="text-zinc-500 text-sm">
+            Vuoi davvero eliminare questo elemento dalla tua libreria? L'azione
+            è irreversibile.
+          </p>
         </div>
         <div className="flex space-x-3">
-          <button 
+          <button
             onClick={onCancel}
             className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all"
           >
             Annulla
           </button>
-          <button 
+          <button
             onClick={onConfirm}
             className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-2xl transition-all shadow-lg shadow-red-900/20"
           >
@@ -1587,35 +2349,49 @@ const DeleteConfirmationModal = ({ isOpen, onConfirm, onCancel }: {
   );
 };
 
-const BulkToolbar = ({ count, totalPrice, onEdit, onDelete, onClear }: { count: number; totalPrice: number; onEdit: () => void; onDelete: () => void; onClear: () => void }) => (
-  <motion.div 
+const BulkToolbar = ({
+  count,
+  totalPrice,
+  onEdit,
+  onDelete,
+  onClear,
+}: {
+  count: number;
+  totalPrice: number;
+  onEdit: () => void;
+  onDelete: () => void;
+  onClear: () => void;
+}) => (
+  <motion.div
     initial={{ y: 100 }}
     animate={{ y: 0 }}
     exit={{ y: 100 }}
     className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-zinc-900 border border-white/10 rounded-2xl p-2 flex items-center space-x-2 shadow-2xl backdrop-blur-xl"
   >
-    <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/5 flex flex-col items-center">
+    <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/10 flex flex-col items-center">
       <span className="text-xs font-bold text-white">{count} selected</span>
       {totalPrice > 0 && (
-        <span className="text-[9px] text-zinc-500 font-mono">Total: €{totalPrice.toFixed(2)}</span>
+        <span className="text-[9px] text-zinc-500 font-mono">
+          Total: €{totalPrice.toFixed(2)}
+        </span>
       )}
     </div>
-    <button 
+    <button
       onClick={onEdit}
       className="p-3 bg-white/5 hover:bg-white/10 text-white rounded-xl transition-all"
       title="Mass Edit"
     >
       <Edit3 className="w-5 h-5" />
     </button>
-    <button 
+    <button
       onClick={onDelete}
-      className="p-3 bg-red-900/20 hover:bg-red-900/40 text-red-500 rounded-xl transition-all"
+      className="p-3 bg-red-50 hover:bg-red-900/40 text-red-500 rounded-xl transition-all"
       title="Mass Delete"
     >
       <Trash2 className="w-5 h-5" />
     </button>
     <div className="w-px h-8 bg-white/10 mx-1" />
-    <button 
+    <button
       onClick={onClear}
       className="p-3 text-zinc-500 hover:text-white transition-all"
       title="Clear Selection"
@@ -1625,12 +2401,20 @@ const BulkToolbar = ({ count, totalPrice, onEdit, onDelete, onClear }: { count: 
   </motion.div>
 );
 
-const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: () => void; onSave: (updates: any) => void }) => {
-  const [seriesName, setSeriesName] = useState('');
-  const [author, setAuthor] = useState('');
-  const [status, setStatus] = useState<Status | ''>('');
-  const [description, setDescription] = useState('');
-  const [price, setPrice] = useState<number | ''>('');
+const BulkEditModal = ({
+  isOpen,
+  onClose,
+  onSave,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (updates: any) => void;
+}) => {
+  const [seriesName, setSeriesName] = useState("");
+  const [author, setAuthor] = useState("");
+  const [status, setStatus] = useState<Status | "">("");
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState<number | "">("");
 
   const handleApply = () => {
     const updates: any = {};
@@ -1638,7 +2422,7 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
     if (author) updates.author = author;
     if (status) updates.status = status;
     if (description) updates.description = description;
-    if (price !== '') updates.price = price;
+    if (price !== "") updates.price = price;
     onSave(updates);
     onClose();
   };
@@ -1646,55 +2430,68 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
   if (!isOpen) return null;
 
   return (
-    <div 
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md"
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-white/90 backdrop-blur-md"
       onKeyDown={(e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === "Enter" && !e.shiftKey) {
           handleApply();
         }
       }}
     >
-      <motion.div 
+      <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2rem] p-6 space-y-6 shadow-2xl"
       >
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-serif font-bold text-white">Mass Edit</h2>
-          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white"><X className="w-5 h-5" /></button>
+          <button
+            onClick={onClose}
+            className="p-2 text-zinc-500 hover:text-white"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <div className="space-y-4">
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Series Name</label>
-            <input 
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Set Series Name
+            </label>
+            <input
               className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
               placeholder="Series name..."
               value={seriesName}
-              onChange={e => setSeriesName(e.target.value)}
+              onChange={(e) => setSeriesName(e.target.value)}
             />
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Author</label>
-            <input 
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Set Author
+            </label>
+            <input
               className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
               placeholder="Author name..."
               value={author}
-              onChange={e => setAuthor(e.target.value)}
+              onChange={(e) => setAuthor(e.target.value)}
             />
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Status</label>
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Set Status
+            </label>
             <div className="grid grid-cols-3 gap-2">
-              {(['unread', 'reading', 'read'] as Status[]).map(s => (
+              {(["unread", "reading", "read"] as Status[]).map((s) => (
                 <button
                   key={s}
                   onClick={() => setStatus(s)}
                   className={cn(
                     "p-2.5 rounded-xl border transition-all text-[9px] font-bold uppercase tracking-widest",
-                    status === s ? "bg-white text-black border-white" : "bg-white/5 border-white/10 text-zinc-500"
+                    status === s
+                      ? "bg-white text-zinc-900 border-white/30"
+                      : "bg-white/5 border-white/10 text-zinc-500",
                   )}
                 >
                   {s}
@@ -1704,31 +2501,39 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Description</label>
-            <textarea 
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Set Description
+            </label>
+            <textarea
               className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 min-h-[80px] resize-none"
               placeholder="New description for all selected items..."
               value={description}
-              onChange={e => setDescription(e.target.value)}
+              onChange={(e) => setDescription(e.target.value)}
             />
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">Set Price (€)</label>
-            <input 
+            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
+              Set Price (€)
+            </label>
+            <input
               type="number"
               step="0.01"
               className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
               placeholder="0.00"
               value={price}
-              onChange={e => setPrice(e.target.value === '' ? '' : parseFloat(e.target.value))}
+              onChange={(e) =>
+                setPrice(
+                  e.target.value === "" ? "" : parseFloat(e.target.value),
+                )
+              }
             />
           </div>
         </div>
 
-        <button 
+        <button
           onClick={handleApply}
-          className="w-full py-4 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all"
+          className="w-full py-4 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-white/10 transition-all"
         >
           Apply Changes
         </button>
@@ -1737,52 +2542,52 @@ const BulkEditModal = ({ isOpen, onClose, onSave }: { isOpen: boolean; onClose: 
   );
 };
 
-const AlertConfirmModal = ({ 
-  isOpen, 
-  title, 
-  message, 
-  onConfirm, 
+const AlertConfirmModal = ({
+  isOpen,
+  title,
+  message,
+  onConfirm,
   onClose,
-  showCancel = false 
-}: { 
-  isOpen: boolean; 
-  title: string; 
-  message: string; 
-  onConfirm?: () => void; 
+  showCancel = false,
+}: {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  onConfirm?: () => void;
   onClose: () => void;
   showCancel?: boolean;
 }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl">
-      <motion.div 
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-white/95 backdrop-blur-xl">
+      <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-center"
       >
         <div className="space-y-3">
           <h2 className="text-xl font-serif font-bold text-white">{title}</h2>
-          <p className="text-zinc-400 text-sm leading-relaxed">{message}</p>
+          <p className="text-zinc-500 text-sm leading-relaxed">{message}</p>
         </div>
 
         <div className="flex gap-3 pt-2">
           {showCancel && (
-            <button 
+            <button
               onClick={onClose}
-              className="flex-1 py-3.5 bg-white/5 text-zinc-500 font-bold rounded-2xl hover:bg-white/10 transition-all border border-white/5 active:scale-95"
+              className="flex-1 py-3.5 bg-white/5 text-zinc-500 font-bold rounded-2xl hover:bg-white/10 transition-all border border-white/10 active:scale-95"
             >
               Cancel
             </button>
           )}
-          <button 
+          <button
             onClick={() => {
               if (onConfirm) onConfirm();
               onClose();
             }}
-            className="flex-1 py-3.5 bg-white text-black font-bold rounded-2xl hover:bg-zinc-200 transition-all active:scale-95 shadow-lg shadow-white/5"
+            className="flex-1 py-3.5 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-white/10 transition-all active:scale-95 shadow-lg shadow-white/5"
           >
-            {showCancel ? 'Confirm' : 'OK'}
+            {showCancel ? "Confirm" : "OK"}
           </button>
         </div>
       </motion.div>
@@ -1794,13 +2599,15 @@ const AlertConfirmModal = ({
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [view, setView] = useState<'library' | 'dashboard' | 'wishlist'>('library');
+  const [view, setView] = useState<"library" | "dashboard" | "wishlist">(
+    "library",
+  );
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<LibraryItem[]>([]);
-  const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<Category | 'all'>('all');
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<string>("all");
   const [sortBy, setSortBy] = useState<SortOption>(() => {
-    return (localStorage.getItem('nerdshelf_sort') as SortOption) || 'date';
+    return (localStorage.getItem("nerdshelf_sort") as SortOption) || "date";
   });
   const [alertConfig, setAlertConfig] = useState<{
     isOpen: boolean;
@@ -1810,12 +2617,13 @@ export default function App() {
     showCancel?: boolean;
   }>({
     isOpen: false,
-    title: '',
-    message: ''
+    title: "",
+    message: "",
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
-  const [selectedItemDetails, setSelectedItemDetails] = useState<LibraryItem | null>(null);
+  const [selectedItemDetails, setSelectedItemDetails] =
+    useState<LibraryItem | null>(null);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [groupBySeries, setGroupBySeries] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -1825,7 +2633,7 @@ export default function App() {
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem('nerdshelf_sort', sortBy);
+    localStorage.setItem("nerdshelf_sort", sortBy);
   }, [sortBy]);
 
   useEffect(() => {
@@ -1843,15 +2651,15 @@ export default function App() {
     }
 
     const q = query(
-      collection(db, 'libraryItems'),
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
+      collection(db, "libraryItems"),
+      where("userId", "==", user.uid),
+      orderBy("createdAt", "desc"),
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
+      const data = snapshot.docs.map((doc) => ({
         id: doc.id,
-        ...doc.data()
+        ...doc.data(),
       })) as LibraryItem[];
       setItems(data);
     });
@@ -1863,9 +2671,12 @@ export default function App() {
   useEffect(() => {
     const testConnection = async () => {
       try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
+        await getDocFromServer(doc(db, "test", "connection"));
       } catch (error) {
-        if(error instanceof Error && error.message.includes('the client is offline')) {
+        if (
+          error instanceof Error &&
+          error.message.includes("the client is offline")
+        ) {
           console.error("Firebase connection error: check your configuration.");
         }
       }
@@ -1873,27 +2684,49 @@ export default function App() {
     testConnection();
   }, []);
 
+  const allTags = useMemo(() => {
+    const tags = new Set<string>();
+    items.forEach((item) => {
+      if (item.tags) {
+        item.tags.forEach((t) => tags.add(t));
+      }
+    });
+    return Array.from(tags).sort();
+  }, [items]);
+
   const filteredItems = useMemo(() => {
-    let result = items.filter(item => {
-      const matchesSearch = item.title.toLowerCase().includes(search.toLowerCase()) || 
-                           item.author.toLowerCase().includes(search.toLowerCase()) ||
-                           (item.seriesName && item.seriesName.toLowerCase().includes(search.toLowerCase()));
-      const matchesFilter = filter === 'all' || item.category === filter;
-      const matchesView = view === 'wishlist' ? item.isWishlist : !item.isWishlist;
+    let result = items.filter((item) => {
+      const matchesSearch =
+        item.title.toLowerCase().includes(search.toLowerCase()) ||
+        item.author.toLowerCase().includes(search.toLowerCase()) ||
+        (item.seriesName &&
+          item.seriesName.toLowerCase().includes(search.toLowerCase()));
+
+      let matchesFilter = true;
+      if (filter !== "all") {
+        if (["book", "manga", "gdr"].includes(filter)) {
+          matchesFilter = item.category === filter;
+        } else {
+          matchesFilter = !!(item.tags && item.tags.includes(filter));
+        }
+      }
+
+      const matchesView =
+        view === "wishlist" ? item.isWishlist : !item.isWishlist;
       return matchesSearch && matchesFilter && matchesView;
     });
 
     return result.sort((a, b) => {
-      if (sortBy === 'title') return a.title.localeCompare(b.title);
-      if (sortBy === 'author') return a.author.localeCompare(b.author);
-      if (sortBy === 'status') return a.status.localeCompare(b.status);
-      if (sortBy === 'volume') {
-        const volA = parseFloat(a.totalVolumes || '0');
-        const volB = parseFloat(b.totalVolumes || '0');
+      if (sortBy === "title") return a.title.localeCompare(b.title);
+      if (sortBy === "author") return a.author.localeCompare(b.author);
+      if (sortBy === "status") return a.status.localeCompare(b.status);
+      if (sortBy === "volume") {
+        const volA = parseFloat(a.totalVolumes || "0");
+        const volB = parseFloat(b.totalVolumes || "0");
         if (!isNaN(volA) && !isNaN(volB)) {
           if (volA !== volB) return volA - volB;
         }
-        return (a.totalVolumes || '').localeCompare(b.totalVolumes || '');
+        return (a.totalVolumes || "").localeCompare(b.totalVolumes || "");
       }
       return 0;
     });
@@ -1903,7 +2736,7 @@ export default function App() {
     const groups: Record<string, LibraryItem[]> = {};
     const standalone: LibraryItem[] = [];
 
-    filteredItems.forEach(item => {
+    filteredItems.forEach((item) => {
       if (item.seriesName) {
         if (!groups[item.seriesName]) groups[item.seriesName] = [];
         groups[item.seriesName].push(item);
@@ -1917,47 +2750,57 @@ export default function App() {
 
   const totalSelectedPrice = useMemo(() => {
     return items
-      .filter(item => selectedIds.includes(item.id))
+      .filter((item) => selectedIds.includes(item.id))
       .reduce((sum, item) => sum + (item.price || 0), 0);
   }, [items, selectedIds]);
 
   const handleSaveItem = async (data: any) => {
     if (!user) return;
-    
+
     // Clean optional fields: remove empty strings/nulls to satisfy Firestore rules
     const cleanData = { ...data };
-    if (cleanData.price === '' || cleanData.price === null) delete cleanData.price;
-    if (cleanData.totalPages === '' || cleanData.totalPages === null) delete cleanData.totalPages;
-    if (cleanData.pagesRead === '' || cleanData.pagesRead === null) delete cleanData.pagesRead;
-    if (cleanData.genre === '') delete cleanData.genre;
-    if (cleanData.isbn === '') delete cleanData.isbn;
-    if (cleanData.totalVolumes === '') delete cleanData.totalVolumes;
-    if (cleanData.system === '') delete cleanData.system;
-    if (cleanData.coverUrl === '') delete cleanData.coverUrl;
-    if (cleanData.seriesName === '') delete cleanData.seriesName;
-    if (cleanData.loanedTo === '') delete cleanData.loanedTo;
+    if (cleanData.price === "" || cleanData.price === null)
+      delete cleanData.price;
+    if (cleanData.totalPages === "" || cleanData.totalPages === null)
+      delete cleanData.totalPages;
+    if (cleanData.pagesRead === "" || cleanData.pagesRead === null)
+      delete cleanData.pagesRead;
+    if (cleanData.genre === "") delete cleanData.genre;
+    if (cleanData.isbn === "") delete cleanData.isbn;
+    if (cleanData.totalVolumes === "") delete cleanData.totalVolumes;
+    if (cleanData.system === "") delete cleanData.system;
+    if (cleanData.coverUrl === "") delete cleanData.coverUrl;
+    if (cleanData.seriesName === "") delete cleanData.seriesName;
+    if (cleanData.loanedTo === "") delete cleanData.loanedTo;
     if (cleanData.loanDate === null) delete cleanData.loanDate;
+    if (cleanData.rating === 0) delete cleanData.rating;
+    if (cleanData.review === "") delete cleanData.review;
+    if (cleanData.tags && cleanData.tags.length === 0) delete cleanData.tags;
 
     try {
       if (editingItem) {
-        await updateDoc(doc(db, 'libraryItems', editingItem.id), cleanData);
+        await updateDoc(doc(db, "libraryItems", editingItem.id), cleanData);
       } else {
-        await addDoc(collection(db, 'libraryItems'), {
+        await addDoc(collection(db, "libraryItems"), {
           ...cleanData,
           userId: user.uid,
-          createdAt: serverTimestamp()
+          createdAt: serverTimestamp(),
         });
       }
     } catch (error) {
-      handleFirestoreError(error, editingItem ? OperationType.UPDATE : OperationType.CREATE, 'libraryItems');
+      handleFirestoreError(
+        error,
+        editingItem ? OperationType.UPDATE : OperationType.CREATE,
+        "libraryItems",
+      );
     }
   };
 
   const handleUpdateStatus = async (id: string, status: Status) => {
     try {
-      await updateDoc(doc(db, 'libraryItems', id), { status });
+      await updateDoc(doc(db, "libraryItems", id), { status });
       if (selectedItemDetails?.id === id) {
-        setSelectedItemDetails(prev => prev ? { ...prev, status } : null);
+        setSelectedItemDetails((prev) => (prev ? { ...prev, status } : null));
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${id}`);
@@ -1966,16 +2809,22 @@ export default function App() {
 
   const handleUpdatePages = async (id: string, pagesRead: number) => {
     try {
-      await updateDoc(doc(db, 'libraryItems', id), { pagesRead });
+      await updateDoc(doc(db, "libraryItems", id), { pagesRead });
       if (selectedItemDetails?.id === id) {
-        setSelectedItemDetails(prev => prev ? { ...prev, pagesRead } : null);
+        setSelectedItemDetails((prev) =>
+          prev ? { ...prev, pagesRead } : null,
+        );
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${id}`);
     }
   };
 
-  const handleUpdateLoan = async (id: string, loanedTo: string, loanDate: Date | null) => {
+  const handleUpdateLoan = async (
+    id: string,
+    loanedTo: string,
+    loanDate: Date | null,
+  ) => {
     try {
       const updates: any = {};
       if (loanedTo) {
@@ -1986,9 +2835,9 @@ export default function App() {
         updates.loanDate = deleteField();
       }
 
-      await updateDoc(doc(db, 'libraryItems', id), updates);
+      await updateDoc(doc(db, "libraryItems", id), updates);
       if (selectedItemDetails?.id === id) {
-        setSelectedItemDetails(prev => {
+        setSelectedItemDetails((prev) => {
           if (!prev) return null;
           const next = { ...prev };
           if (loanedTo) {
@@ -2013,57 +2862,66 @@ export default function App() {
   const confirmDelete = async () => {
     if (!itemToDelete) return;
     try {
-      await deleteDoc(doc(db, 'libraryItems', itemToDelete));
+      await deleteDoc(doc(db, "libraryItems", itemToDelete));
       setItemToDelete(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `libraryItems/${itemToDelete}`);
+      handleFirestoreError(
+        error,
+        OperationType.DELETE,
+        `libraryItems/${itemToDelete}`,
+      );
     }
   };
 
   const toggleSelection = (id: string) => {
-    setSelectedIds(prev => 
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
     );
   };
 
   const handleBulkUpdate = async (updates: any) => {
     try {
-      const promises = selectedIds.map(id => 
-        updateDoc(doc(db, 'libraryItems', id), updates)
+      const promises = selectedIds.map((id) =>
+        updateDoc(doc(db, "libraryItems", id), updates),
       );
       await Promise.all(promises);
       setSelectedIds([]);
       setIsBulkEditModalOpen(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'bulk');
+      handleFirestoreError(error, OperationType.UPDATE, "bulk");
     }
   };
 
   const handleBulkDelete = async () => {
     try {
-      const promises = selectedIds.map(id => 
-        deleteDoc(doc(db, 'libraryItems', id))
+      const promises = selectedIds.map((id) =>
+        deleteDoc(doc(db, "libraryItems", id)),
       );
       await Promise.all(promises);
       setSelectedIds([]);
       setIsSelectionMode(false);
       setIsBulkDeleteConfirmOpen(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'bulk');
+      handleFirestoreError(error, OperationType.DELETE, "bulk");
     }
   };
 
-  const showAlert = (title: string, message: string, onConfirm?: () => void, showCancel = false) => {
+  const showAlert = (
+    title: string,
+    message: string,
+    onConfirm?: () => void,
+    showCancel = false,
+  ) => {
     setAlertConfig({ isOpen: true, title, message, onConfirm, showCancel });
   };
 
   const handleExportData = () => {
     const data = JSON.stringify(items, null, 2);
-    const blob = new Blob([data], { type: 'application/json' });
+    const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = url;
-    link.download = `nerdshelf_backup_${new Date().toISOString().split('T')[0]}.json`;
+    link.download = `nerdshelf_backup_${new Date().toISOString().split("T")[0]}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -2071,9 +2929,9 @@ export default function App() {
   };
 
   const handleImportData = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'application/json';
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "application/json";
     input.onchange = async (e: any) => {
       const file = e.target.files[0];
       if (!file || !user) return;
@@ -2083,13 +2941,16 @@ export default function App() {
         try {
           const importedItems = JSON.parse(event.target.result);
           if (!Array.isArray(importedItems)) {
-            showAlert('Import Error', 'Invalid backup file format. Must be an array of items.');
+            showAlert(
+              "Import Error",
+              "Invalid backup file format. Must be an array of items.",
+            );
             return;
           }
 
           const performImport = async () => {
-            const libraryRef = collection(db, 'libraryItems');
-            
+            const libraryRef = collection(db, "libraryItems");
+
             // Firestore batches have a limit of 500 operations
             const chunks = [];
             for (let i = 0; i < importedItems.length; i += 500) {
@@ -2105,27 +2966,33 @@ export default function App() {
                   batch.set(newDocRef, {
                     ...cleanItem,
                     userId: user.uid,
-                    createdAt: serverTimestamp()
+                    createdAt: serverTimestamp(),
                   });
                 });
                 await batch.commit();
               }
-              showAlert('Success', 'Library imported successfully!');
+              showAlert("Success", "Library imported successfully!");
             } catch (err) {
               console.error(err);
-              showAlert('Import Failed', 'There was an error saving the imported data to the database.');
+              showAlert(
+                "Import Failed",
+                "There was an error saving the imported data to the database.",
+              );
             }
           };
 
           showAlert(
-            'Import Confirmation', 
+            "Import Confirmation",
             `Import ${importedItems.length} items? This will add them to your current library.`,
             performImport,
-            true
+            true,
           );
         } catch (err) {
           console.error(err);
-          showAlert('Parse Error', 'The file content could not be read as valid JSON.');
+          showAlert(
+            "Parse Error",
+            "The file content could not be read as valid JSON.",
+          );
         }
       };
       reader.readAsText(file);
@@ -2133,19 +3000,27 @@ export default function App() {
     input.click();
   };
 
-  if (loading) return (
-    <div className="min-h-screen bg-black flex items-center justify-center">
-      <div className="w-12 h-12 border-4 border-zinc-800 border-t-white rounded-full animate-spin" />
-    </div>
-  );
+  if (loading)
+    return (
+      <div className="min-h-screen bg-transparent flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-zinc-800 border-t-white rounded-full animate-spin" />
+      </div>
+    );
 
   if (!user) return <AuthScreen />;
 
   return (
-    <div className="min-h-screen pb-24">
+    <div className="min-h-screen pb-24 relative overflow-hidden">
+      {/* Dynamic Background Effects */}
+      <div className="fixed inset-0 pointer-events-none z-[-1] overflow-hidden">
+        <div className="absolute top-[-20%] left-[-10%] w-[50vw] h-[50vw] bg-purple-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50"></div>
+        <div className="absolute bottom-[-20%] right-[-10%] w-[50vw] h-[50vw] bg-red-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50"></div>
+        <div className="absolute top-[40%] left-[60%] w-[30vw] h-[30vw] bg-blue-900/10 rounded-full blur-[100px] mix-blend-screen opacity-30"></div>
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] mix-blend-overlay"></div>
+      </div>
       {/* Header */}
-      <header className="relative sm:sticky sm:top-0 z-40 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-3">
-        <div className="max-w-6xl mx-auto">
+      <header className="relative sm:sticky sm:top-6 z-40 px-4 sm:px-6 mb-6 w-full max-w-6xl mx-auto">
+        <div className="bg-black/40 backdrop-blur-2xl border border-white/10 sm:rounded-[2rem] px-6 py-3 shadow-2xl glass-card">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-center justify-between sm:justify-start sm:space-x-8">
               <div className="flex items-center space-x-3">
@@ -2154,30 +3029,45 @@ export default function App() {
                   Nerd<span className="text-red-700">Shelf</span>
                 </h1>
               </div>
-              
-              <nav className="hidden sm:flex items-center space-x-1 bg-white/5 p-1 rounded-xl border border-white/5">
-                <button 
-                  onClick={() => setView('library')}
-                  className={cn("px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all", view === 'library' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
+
+              <nav className="hidden sm:flex items-center space-x-1 bg-white/5 p-1 rounded-xl border border-white/10">
+                <button
+                  onClick={() => setView("library")}
+                  className={cn(
+                    "px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                    view === "library"
+                      ? "bg-white text-zinc-900"
+                      : "text-zinc-500 hover:text-white",
+                  )}
                 >
                   Library
                 </button>
-                <button 
-                  onClick={() => setView('dashboard')}
-                  className={cn("px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all", view === 'dashboard' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
+                <button
+                  onClick={() => setView("dashboard")}
+                  className={cn(
+                    "px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                    view === "dashboard"
+                      ? "bg-white text-zinc-900"
+                      : "text-zinc-500 hover:text-white",
+                  )}
                 >
                   Stats
                 </button>
-                <button 
-                  onClick={() => setView('wishlist')}
-                  className={cn("px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all", view === 'wishlist' ? "bg-white text-black" : "text-zinc-500 hover:text-white")}
+                <button
+                  onClick={() => setView("wishlist")}
+                  className={cn(
+                    "px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                    view === "wishlist"
+                      ? "bg-white text-zinc-900"
+                      : "text-zinc-500 hover:text-white",
+                  )}
                 >
                   Wishlist
                 </button>
               </nav>
 
               <div className="sm:hidden flex items-center space-x-2">
-                <button 
+                <button
                   onClick={() => signOut(auth)}
                   className="p-2 text-zinc-500 hover:text-white transition-colors"
                 >
@@ -2186,39 +3076,45 @@ export default function App() {
               </div>
             </div>
 
-            {(view === 'library' || view === 'wishlist') && (
-              <div className="flex flex-1 items-center space-x-3 max-w-2xl">
-                <div className="relative flex-1">
+            {(view === "library" || view === "wishlist") && (
+              <div className="flex flex-col sm:flex-row flex-1 sm:items-center gap-3 max-w-2xl w-full">
+                <div className="relative flex-1 w-full">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-                  <input 
-                    className="w-full bg-white/5 border border-white/5 rounded-xl py-2 pl-10 pr-4 text-xs text-white focus:outline-none focus:bg-white/10 transition-all"
+                  <input
+                    className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs text-white focus:outline-none focus:bg-white/10 transition-all"
                     placeholder="Search library..."
                     value={search}
-                    onChange={e => setSearch(e.target.value)}
+                    onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
-                
-                <div className="flex items-center space-x-2 shrink-0">
-                  <button 
+
+                <div className="flex items-center justify-end sm:justify-start space-x-2 shrink-0 w-full sm:w-auto">
+                  <button
                     onClick={() => {
                       setIsSelectionMode(!isSelectionMode);
                       if (isSelectionMode) setSelectedIds([]);
                     }}
                     className={cn(
                       "p-2 rounded-lg border transition-all flex items-center space-x-2",
-                      isSelectionMode ? "bg-white text-black border-white" : "bg-transparent border-white/5 text-zinc-500 hover:text-white"
+                      isSelectionMode
+                        ? "bg-white text-zinc-900 border-white/30"
+                        : "bg-transparent border-white/10 text-zinc-500 hover:text-white",
                     )}
                     title="Selection Mode"
                   >
                     <CheckCircle2 className="w-4 h-4" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest hidden md:block">Select</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest hidden md:block">
+                      Select
+                    </span>
                   </button>
 
-                  <button 
+                  <button
                     onClick={() => setGroupBySeries(!groupBySeries)}
                     className={cn(
                       "p-2 rounded-lg border transition-all",
-                      groupBySeries ? "bg-white/10 border-white/20 text-white" : "bg-transparent border-white/5 text-zinc-500 hover:text-white"
+                      groupBySeries
+                        ? "bg-white/10 border-white/20 text-white"
+                        : "bg-transparent border-white/10 text-zinc-500 hover:text-white",
                     )}
                     title="Group by Series"
                   >
@@ -2226,85 +3122,145 @@ export default function App() {
                   </button>
 
                   <div className="relative">
-                    <button 
+                    <button
                       onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
                       className={cn(
                         "p-2 rounded-lg border transition-all flex items-center space-x-2",
-                        filter !== 'all' ? "bg-white/10 border-white/20 text-white" : "bg-transparent border-white/5 text-zinc-500 hover:text-white"
+                        filter !== "all"
+                          ? "bg-white/10 border-white/20 text-white"
+                          : "bg-transparent border-white/10 text-zinc-500 hover:text-white",
                       )}
                     >
                       <Filter className="w-4 h-4" />
                       <span className="text-[10px] font-bold uppercase tracking-widest hidden lg:block">
-                        {filter === 'all' ? 'All' : filter === 'gdr' ? 'RPG' : filter}
+                        {filter === "all"
+                          ? "All"
+                          : filter === "gdr"
+                            ? "RPG"
+                            : filter}
                       </span>
                     </button>
 
                     <AnimatePresence>
                       {isFilterMenuOpen && (
                         <>
-                          <div className="fixed inset-0 z-10" onClick={() => setIsFilterMenuOpen(false)} />
-                          <motion.div 
+                          <div
+                            className="fixed inset-0 z-10"
+                            onClick={() => setIsFilterMenuOpen(false)}
+                          />
+                          <motion.div
                             initial={{ opacity: 0, y: 10, scale: 0.95 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                            className="absolute right-0 mt-2 w-40 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden z-20"
+                            className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden z-20 max-h-96 overflow-y-auto"
                           >
-                            {[
-                              { id: 'all', label: 'All', color: 'bg-white text-black' },
-                              { id: 'book', label: 'Books', color: 'btn-book text-white' },
-                              { id: 'manga', label: 'Manga', color: 'btn-manga text-white' },
-                              { id: 'gdr', label: 'RPG', color: 'btn-gdr text-white' }
-                            ].map(cat => (
-                              <button
-                                key={cat.id}
-                                onClick={() => {
-                                  setFilter(cat.id as any);
-                                  setIsFilterMenuOpen(false);
-                                }}
-                                className={cn(
-                                  "w-full px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-between",
-                                  filter === cat.id ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5"
-                                )}
-                              >
-                                {cat.label}
-                                {filter === cat.id && <div className={cn("w-1.5 h-1.5 rounded-full", cat.id === 'all' ? "bg-white" : cat.id === 'book' ? "bg-amber-600" : cat.id === 'manga' ? "bg-purple-600" : "bg-red-700")} />}
-                              </button>
-                            ))}
+                            <div className="py-2">
+                              {[
+                                {
+                                  id: "all",
+                                  label: "All Collections",
+                                  color: "bg-white text-zinc-900",
+                                },
+                                {
+                                  id: "book",
+                                  label: "Books",
+                                  color: "btn-book text-white",
+                                },
+                                {
+                                  id: "manga",
+                                  label: "Manga",
+                                  color: "btn-manga text-white",
+                                },
+                                {
+                                  id: "gdr",
+                                  label: "RPG",
+                                  color: "btn-gdr text-white",
+                                },
+                                ...allTags.map((tag) => ({
+                                  id: tag,
+                                  label: tag,
+                                  color: "bg-white/20 text-white",
+                                })),
+                              ].map((cat, idx) => (
+                                <button
+                                  key={cat.id}
+                                  onClick={() => {
+                                    setFilter(cat.id as any);
+                                    setIsFilterMenuOpen(false);
+                                  }}
+                                  className={cn(
+                                    "w-full px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-between",
+                                    filter === cat.id
+                                      ? "bg-white/10 text-white"
+                                      : "text-zinc-500 hover:bg-white/5",
+                                    idx === 4 &&
+                                      "border-t border-white/10 mt-1 pt-3", // Add separation before tags
+                                  )}
+                                >
+                                  {cat.label}
+                                  {filter === cat.id && (
+                                    <div
+                                      className={cn(
+                                        "w-2 h-2 rounded-full",
+                                        [
+                                          "all",
+                                          "book",
+                                          "manga",
+                                          "gdr",
+                                        ].includes(cat.id)
+                                          ? cat.color
+                                          : "bg-purple-500",
+                                      )}
+                                    />
+                                  )}
+                                </button>
+                              ))}
+                            </div>
                           </motion.div>
                         </>
                       )}
                     </AnimatePresence>
                   </div>
 
-                  <button 
+                  <button
                     onClick={handleExportData}
-                    className="p-2 rounded-lg border bg-transparent border-white/5 text-zinc-500 hover:text-white transition-all"
+                    className="p-2 rounded-lg border bg-transparent border-white/10 text-zinc-500 hover:text-white transition-all"
                     title="Download Backup"
                   >
                     <Download className="w-4 h-4" />
                   </button>
 
-                  <button 
+                  <button
                     onClick={handleImportData}
-                    className="p-2 rounded-lg border bg-transparent border-white/5 text-zinc-500 hover:text-white transition-all"
+                    className="p-2 rounded-lg border bg-transparent border-white/10 text-zinc-500 hover:text-white transition-all"
                     title="Upload Backup"
                   >
                     <Upload className="w-4 h-4" />
                   </button>
 
-                  <select 
+                  <select
                     value={sortBy}
-                    onChange={e => setSortBy(e.target.value as SortOption)}
-                    className="bg-white/5 border border-white/10 text-[9px] uppercase font-bold tracking-widest text-zinc-400 rounded-lg px-2 py-2 focus:outline-none"
+                    onChange={(e) => setSortBy(e.target.value as SortOption)}
+                    className="bg-white/5 border border-white/10 text-[9px] uppercase font-bold tracking-widest text-zinc-500 rounded-lg px-2 py-2 focus:outline-none"
                   >
-                    <option value="date" className="bg-zinc-900">Newest</option>
-                    <option value="title" className="bg-zinc-900">Title</option>
-                    <option value="author" className="bg-zinc-900">Author</option>
-                    <option value="status" className="bg-zinc-900">Status</option>
-                    <option value="volume" className="bg-zinc-900">Volume</option>
+                    <option value="date" className="bg-zinc-900">
+                      Newest
+                    </option>
+                    <option value="title" className="bg-zinc-900">
+                      Title
+                    </option>
+                    <option value="author" className="bg-zinc-900">
+                      Author
+                    </option>
+                    <option value="status" className="bg-zinc-900">
+                      Status
+                    </option>
+                    <option value="volume" className="bg-zinc-900">
+                      Volume
+                    </option>
                   </select>
 
-                  <button 
+                  <button
                     onClick={() => signOut(auth)}
                     className="hidden sm:block p-2 text-zinc-500 hover:text-white transition-colors"
                   >
@@ -2314,8 +3270,8 @@ export default function App() {
               </div>
             )}
 
-            {view !== 'library' && (
-              <button 
+            {view !== "library" && (
+              <button
                 onClick={() => signOut(auth)}
                 className="hidden sm:block p-2 text-zinc-500 hover:text-white transition-colors"
               >
@@ -2324,15 +3280,15 @@ export default function App() {
             )}
           </div>
 
-          {view === 'library' && (
-            <div className="mt-3 border-t border-white/5" />
+          {view === "library" && (
+            <div className="mt-3 border-t border-white/10" />
           )}
         </div>
       </header>
 
       {/* Main Content */}
       <main className="max-w-6xl mx-auto">
-        {view === 'dashboard' ? (
+        {view === "dashboard" ? (
           <Dashboard items={items} />
         ) : (
           <div className="p-6 space-y-10">
@@ -2340,32 +3296,40 @@ export default function App() {
               {groupBySeries ? (
                 <motion.div key="grouped-view" className="space-y-10">
                   {/* Series Groups */}
-                  {Object.entries(groupedItems.groups).map(([seriesName, seriesItems]) => {
-                    const items = seriesItems as LibraryItem[];
-                    return (
-                      <div key={`series-${seriesName}`} className="space-y-4">
-                        <div className="flex items-center space-x-3">
-                          <div className="p-2 bg-white/5 rounded-lg border border-white/10">
-                            <Layers className="w-4 h-4 text-zinc-400" />
+                  {Object.entries(groupedItems.groups).map(
+                    ([seriesName, seriesItems]) => {
+                      const items = seriesItems as LibraryItem[];
+                      return (
+                        <div key={`series-${seriesName}`} className="space-y-4">
+                          <div className="flex items-center space-x-3">
+                            <div className="p-2 bg-white/5 rounded-lg border border-white/10">
+                              <Layers className="w-4 h-4 text-zinc-500" />
+                            </div>
+                            <h2 className="text-lg font-serif font-bold text-white">
+                              {seriesName}
+                            </h2>
+                            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                              {items.length} items
+                            </span>
                           </div>
-                          <h2 className="text-lg font-serif font-bold text-white">{seriesName}</h2>
-                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{items.length} items</span>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                            {items.map((item) => (
+                              <ItemCard
+                                key={item.id}
+                                item={item}
+                                onOpenDetails={(item) =>
+                                  setSelectedItemDetails(item)
+                                }
+                                isSelected={selectedIds.includes(item.id)}
+                                onSelect={toggleSelection}
+                                selectionMode={isSelectionMode}
+                              />
+                            ))}
+                          </div>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                          {items.map(item => (
-                            <ItemCard 
-                              key={item.id} 
-                              item={item} 
-                              onOpenDetails={(item) => setSelectedItemDetails(item)}
-                              isSelected={selectedIds.includes(item.id)}
-                              onSelect={toggleSelection}
-                              selectionMode={isSelectionMode}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    },
+                  )}
 
                   {/* Standalone Items */}
                   {groupedItems.standalone.length > 0 && (
@@ -2373,17 +3337,21 @@ export default function App() {
                       {Object.keys(groupedItems.groups).length > 0 && (
                         <div className="flex items-center space-x-3">
                           <div className="p-2 bg-white/5 rounded-lg border border-white/10">
-                            <Book className="w-4 h-4 text-zinc-400" />
+                            <Book className="w-4 h-4 text-zinc-500" />
                           </div>
-                          <h2 className="text-lg font-serif font-bold text-white">Single Volumes</h2>
+                          <h2 className="text-lg font-serif font-bold text-white">
+                            Single Volumes
+                          </h2>
                         </div>
                       )}
                       <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                        {groupedItems.standalone.map(item => (
-                          <ItemCard 
-                            key={item.id} 
-                            item={item} 
-                            onOpenDetails={(item) => setSelectedItemDetails(item)}
+                        {groupedItems.standalone.map((item) => (
+                          <ItemCard
+                            key={item.id}
+                            item={item}
+                            onOpenDetails={(item) =>
+                              setSelectedItemDetails(item)
+                            }
                             isSelected={selectedIds.includes(item.id)}
                             onSelect={toggleSelection}
                             selectionMode={isSelectionMode}
@@ -2394,14 +3362,14 @@ export default function App() {
                   )}
                 </motion.div>
               ) : (
-                <motion.div 
+                <motion.div
                   key="flat-view"
                   className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6"
                 >
-                  {filteredItems.map(item => (
-                    <ItemCard 
-                      key={item.id} 
-                      item={item} 
+                  {filteredItems.map((item) => (
+                    <ItemCard
+                      key={item.id}
+                      item={item}
                       onOpenDetails={(item) => setSelectedItemDetails(item)}
                       isSelected={selectedIds.includes(item.id)}
                       onSelect={toggleSelection}
@@ -2412,7 +3380,7 @@ export default function App() {
               )}
 
               {filteredItems.length === 0 && (
-                <motion.div 
+                <motion.div
                   key="empty-state"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -2421,7 +3389,9 @@ export default function App() {
                   <div className="inline-flex p-6 rounded-full bg-white/5 text-zinc-700">
                     <Filter className="w-12 h-12" />
                   </div>
-                  <p className="text-zinc-500 font-light">No treasures found in this section.</p>
+                  <p className="text-zinc-500 font-light">
+                    No treasures found in this section.
+                  </p>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -2430,87 +3400,108 @@ export default function App() {
       </main>
 
       {/* Mobile Nav */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-white/5 px-4 py-4 flex justify-between items-center z-40">
-        <button 
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-white/10 px-4 py-4 flex justify-between items-center z-40">
+        <button
           onClick={() => {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-            setView('library');
+            window.scrollTo({ top: 0, behavior: "smooth" });
+            setView("library");
             // Focus search input after a short delay to allow scroll/view change
             setTimeout(() => {
-              const searchInput = document.querySelector('header input') as HTMLInputElement;
+              const searchInput = document.querySelector(
+                "header input",
+              ) as HTMLInputElement;
               if (searchInput) searchInput.focus();
             }, 500);
           }}
-          className="flex flex-col items-center space-y-1 text-zinc-600 hover:text-white transition-colors"
+          className="flex flex-col items-center space-y-1 text-zinc-500 hover:text-white transition-colors"
         >
           <Search className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">Search</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest">
+            Search
+          </span>
         </button>
 
-        <button 
-          onClick={() => setView('library')}
-          className={cn("flex flex-col items-center space-y-1", view === 'library' ? "text-white" : "text-zinc-600")}
+        <button
+          onClick={() => setView("library")}
+          className={cn(
+            "flex flex-col items-center space-y-1",
+            view === "library" ? "text-white" : "text-zinc-500",
+          )}
         >
           <Book className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">Library</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest">
+            Library
+          </span>
         </button>
-        
-        <button 
+
+        <button
           onClick={() => {
             setEditingItem(null);
             setIsModalOpen(true);
           }}
           className="flex flex-col items-center -mt-8"
         >
-          <div className="w-14 h-14 bg-white text-black rounded-full shadow-2xl flex items-center justify-center border-4 border-black">
+          <div className="w-14 h-14 bg-white text-zinc-900 rounded-full shadow-2xl flex items-center justify-center border-4 border-black">
             <Plus className="w-7 h-7" />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest mt-1 text-white">Add</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest mt-1 text-white">
+            Add
+          </span>
         </button>
 
-        <button 
-          onClick={() => setView('dashboard')}
-          className={cn("flex flex-col items-center space-y-1", view === 'dashboard' ? "text-white" : "text-zinc-600")}
+        <button
+          onClick={() => setView("dashboard")}
+          className={cn(
+            "flex flex-col items-center space-y-1",
+            view === "dashboard" ? "text-white" : "text-zinc-500",
+          )}
         >
           <Sparkles className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">Stats</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest">
+            Stats
+          </span>
         </button>
 
-        <button 
-          onClick={() => setView('wishlist')}
-          className={cn("flex flex-col items-center space-y-1", view === 'wishlist' ? "text-white" : "text-zinc-600")}
+        <button
+          onClick={() => setView("wishlist")}
+          className={cn(
+            "flex flex-col items-center space-y-1",
+            view === "wishlist" ? "text-white" : "text-zinc-500",
+          )}
         >
           <Heart className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">Wishlist</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest">
+            Wishlist
+          </span>
         </button>
       </div>
 
       {/* FAB (Desktop Only) */}
-      <button 
+      <button
         onClick={() => {
           setEditingItem(null);
           setIsModalOpen(true);
         }}
-        className="hidden sm:flex fixed bottom-8 right-8 w-16 h-16 bg-white text-black rounded-full shadow-2xl items-center justify-center hover:scale-110 active:scale-95 transition-all z-50"
+        className="hidden sm:flex fixed bottom-8 right-8 w-16 h-16 bg-white text-zinc-900 rounded-full shadow-2xl items-center justify-center hover:scale-110 active:scale-95 transition-all z-50"
       >
         <Plus className="w-8 h-8" />
       </button>
 
-      <ItemModal 
-        isOpen={isModalOpen} 
+      <ItemModal
+        isOpen={isModalOpen}
         onClose={() => {
           setIsModalOpen(false);
           setEditingItem(null);
-        }} 
+        }}
         onSave={handleSaveItem}
         initialData={editingItem}
-        existingAuthors={items.map(i => i.author).filter(Boolean)}
+        existingAuthors={items.map((i) => i.author).filter(Boolean)}
       />
 
       <AnimatePresence>
         {isSelectionMode && (
-          <BulkToolbar 
-            count={selectedIds.length} 
+          <BulkToolbar
+            count={selectedIds.length}
             totalPrice={totalSelectedPrice}
             onEdit={() => setIsBulkEditModalOpen(true)}
             onDelete={() => setIsBulkDeleteConfirmOpen(true)}
@@ -2522,25 +3513,25 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <DeleteConfirmationModal 
+      <DeleteConfirmationModal
         isOpen={isBulkDeleteConfirmOpen}
         onConfirm={handleBulkDelete}
         onCancel={() => setIsBulkDeleteConfirmOpen(false)}
       />
 
-      <BulkEditModal 
+      <BulkEditModal
         isOpen={isBulkEditModalOpen}
         onClose={() => setIsBulkEditModalOpen(false)}
         onSave={handleBulkUpdate}
       />
 
-      <DeleteConfirmationModal 
+      <DeleteConfirmationModal
         isOpen={!!itemToDelete}
         onConfirm={confirmDelete}
         onCancel={() => setItemToDelete(null)}
       />
 
-      <DetailsModal 
+      <DetailsModal
         item={selectedItemDetails}
         isOpen={!!selectedItemDetails}
         onClose={() => setSelectedItemDetails(null)}
@@ -2554,13 +3545,13 @@ export default function App() {
         onDelete={handleDeleteItem}
       />
 
-      <AlertConfirmModal 
+      <AlertConfirmModal
         isOpen={alertConfig.isOpen}
         title={alertConfig.title}
         message={alertConfig.message}
         onConfirm={alertConfig.onConfirm}
         showCancel={alertConfig.showCancel}
-        onClose={() => setAlertConfig(prev => ({ ...prev, isOpen: false }))}
+        onClose={() => setAlertConfig((prev) => ({ ...prev, isOpen: false }))}
       />
     </div>
   );
