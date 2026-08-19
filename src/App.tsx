@@ -57,12 +57,16 @@ import {
   Edit3,
   Download,
   Upload,
+  User as UserIcon,
+  Settings,
+  Filter,
 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import { motion, AnimatePresence } from "framer-motion";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { Logo } from "./components/Logo";
+import { ShelfView } from "./components/ShelfView";
 import {
   PieChart,
   Pie,
@@ -151,7 +155,7 @@ function handleFirestoreError(
 // --- Types ---
 type Category = "book" | "manga" | "gdr";
 type Status = "unread" | "reading" | "read";
-type SortOption = "title" | "author" | "status" | "date" | "volume";
+type SortOption = "title" | "author" | "status" | "date" | "volume" | "series";
 
 interface LibraryItem {
   id: string;
@@ -176,6 +180,8 @@ interface LibraryItem {
   rating?: number;
   review?: string;
   tags?: string[];
+  volumeNumber?: number;
+  volumeCount?: number;
   createdAt: any;
 }
 
@@ -403,7 +409,7 @@ const AuthScreen = () => {
           </div>
           <div className="space-y-2">
             <h1 className="text-6xl font-serif font-bold text-white tracking-tighter">
-              Nerd<span className="text-red-700">Shelf</span>
+              Nerd<span className="text-[var(--color-brand-orange)]">Shelf</span>
             </h1>
             <p className="text-zinc-500 text-lg font-light">
               Your personal sanctuary for classics, manga, and epic quests.
@@ -594,8 +600,13 @@ const ItemCard = ({
           </div>
         )}
         {item.isWishlist && (
-          <div className="absolute top-2 right-2 bg-red-600/90 text-white p-1 rounded-full shadow-lg">
+          <div className="absolute top-2 right-2 bg-rose-500/90 text-white p-1 rounded-full shadow-lg">
             <Heart className="w-3 h-3 fill-white" />
+          </div>
+        )}
+        {item.volumeNumber && (
+          <div className="absolute bottom-2 right-2 bg-zinc-900/90 border border-white/20 text-white w-7 h-7 rounded-full shadow-lg flex items-center justify-center backdrop-blur-sm">
+            <span className="font-bold text-[11px] leading-none">{item.volumeNumber}</span>
           </div>
         )}
         {selectionMode && (
@@ -747,6 +758,8 @@ const ItemModal = ({
     price: "" as string | number,
     isbn: "",
     totalVolumes: "",
+    volumeNumber: "" as string | number,
+    volumeCount: "" as string | number,
     system: "",
     totalPages: "" as string | number,
     pagesRead: "" as string | number,
@@ -765,7 +778,7 @@ const ItemModal = ({
   const [isSearching, setIsSearching] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [isBulkMode, setIsBulkMode] = useState(false);
-  const [bulkRange, setBulkRange] = useState({ start: 1, end: 1 });
+  const [bulkCount, setBulkCount] = useState(1);
 
   const searchCovers = async () => {
     if (!formData.title) return;
@@ -800,6 +813,8 @@ const ItemModal = ({
         price: initialData.price ?? "",
         isbn: initialData.isbn || "",
         totalVolumes: initialData.totalVolumes || "",
+        volumeNumber: initialData.volumeNumber ?? "",
+        volumeCount: initialData.volumeCount ?? "",
         system: initialData.system || "",
         totalPages: initialData.totalPages ?? "",
         pagesRead: initialData.pagesRead ?? "",
@@ -823,6 +838,8 @@ const ItemModal = ({
         price: "",
         isbn: "",
         totalVolumes: "",
+        volumeNumber: "",
+        volumeCount: "",
         system: "",
         totalPages: "",
         pagesRead: "",
@@ -832,6 +849,9 @@ const ItemModal = ({
         loanedTo: "",
         loanDate: null,
         description: "",
+        rating: 0,
+        review: "",
+        tags: [],
       });
     }
   }, [initialData, isOpen]);
@@ -867,15 +887,18 @@ const ItemModal = ({
   const handleSave = () => {
     if (!formData.title) return;
     if (isBulkMode) {
-      const start = Math.min(bulkRange.start, bulkRange.end);
-      const end = Math.max(bulkRange.start, bulkRange.end);
-      for (let v = start; v <= end; v++) {
-        onSave({
+      const startVol = parseInt(formData.volumeNumber as string) || 1;
+      const count = Math.max(1, bulkCount);
+      const itemsToSave = [];
+      for (let i = 0; i < count; i++) {
+        itemsToSave.push({
           ...formData,
-          title: formData.title,
-          totalVolumes: v.toString(),
+          volumeNumber: startVol + i,
+          volumeCount: count,
+          coverUrl: i === 0 ? formData.coverUrl : "" // Only first gets the specific cover as requested
         });
       }
+      onSave(itemsToSave);
     } else {
       onSave(formData);
     }
@@ -927,7 +950,7 @@ const ItemModal = ({
         )}
 
         <div className="space-y-4">
-          {formData.category === "manga" && !initialData && (
+          {!initialData && (
             <div className="flex items-center justify-between p-3 bg-white/5 rounded-2xl border border-white/10">
               <div className="flex items-center space-x-2">
                 <Layers className="w-4 h-4 text-purple-500" />
@@ -953,43 +976,22 @@ const ItemModal = ({
           )}
 
           {isBulkMode && (
-            <div className="grid grid-cols-2 gap-4 p-4 bg-purple-900/10 rounded-2xl border border-purple-500/20">
+            <div className="grid grid-cols-1 gap-4 p-4 bg-purple-900/10 rounded-2xl border border-purple-500/20">
               <div className="space-y-1">
                 <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                  Start Volume
+                  Number of Volumes to Create
                 </label>
                 <input
                   type="number"
+                  min="1"
+                  max="300"
                   className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none"
-                  value={bulkRange.start}
-                  onChange={(e) =>
-                    setBulkRange({
-                      ...bulkRange,
-                      start: parseInt(e.target.value) || 1,
-                    })
-                  }
+                  value={bulkCount}
+                  onChange={(e) => setBulkCount(parseInt(e.target.value) || 1)}
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                  End Volume
-                </label>
-                <input
-                  type="number"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none"
-                  value={bulkRange.end}
-                  onChange={(e) =>
-                    setBulkRange({
-                      ...bulkRange,
-                      end: parseInt(e.target.value) || 1,
-                    })
-                  }
-                />
-              </div>
-              <p className="col-span-2 text-[10px] text-purple-400 italic text-center">
-                This will create{" "}
-                {Math.max(0, bulkRange.end - bulkRange.start + 1)} volumes
-                automatically.
+              <p className="col-span-1 text-[10px] text-purple-400 italic text-center">
+                This will create {bulkCount} volumes automatically, starting from volume {formData.volumeNumber || 1}.
               </p>
             </div>
           )}
@@ -2005,7 +2007,7 @@ const DetailsModal = ({
               {config.label}
             </span>
             <h2 className="text-xl font-serif font-bold text-white leading-tight">
-              {item.title}
+              {item.title}{item.volumeNumber ? ` · Vol. ${item.volumeNumber}` : ''}
             </h2>
             <div className="flex items-center justify-between">
               <p className="text-sm text-zinc-500">{item.author}</p>
@@ -2599,9 +2601,9 @@ const AlertConfirmModal = ({
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [view, setView] = useState<"library" | "dashboard" | "wishlist">(
-    "library",
-  );
+  const [isDark, setIsDark] = useState(true);
+  useEffect(() => { document.documentElement.classList.toggle("dark", isDark); }, [isDark]);
+  const [view, setView] = useState<"shelf" | "library" | "dashboard" | "wishlist">("library");
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [search, setSearch] = useState("");
@@ -2609,6 +2611,9 @@ export default function App() {
   const [sortBy, setSortBy] = useState<SortOption>(() => {
     return (localStorage.getItem("nerdshelf_sort") as SortOption) || "date";
   });
+  
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
   const [alertConfig, setAlertConfig] = useState<{
     isOpen: boolean;
     title: string;
@@ -2630,7 +2635,6 @@ export default function App() {
   const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false);
-  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem("nerdshelf_sort", sortBy);
@@ -2718,6 +2722,13 @@ export default function App() {
 
     return result.sort((a, b) => {
       if (sortBy === "title") return a.title.localeCompare(b.title);
+      if (sortBy === "series") {
+         const sa = a.seriesName || a.title;
+         const sb = b.seriesName || b.title;
+         const cmp = sa.localeCompare(sb);
+         if (cmp !== 0) return cmp;
+         return (a.volumeNumber || 0) - (b.volumeNumber || 0);
+      }
       if (sortBy === "author") return a.author.localeCompare(b.author);
       if (sortBy === "status") return a.status.localeCompare(b.status);
       if (sortBy === "volume") {
@@ -3019,277 +3030,170 @@ export default function App() {
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] mix-blend-overlay"></div>
       </div>
       {/* Header */}
-      <header className="relative sm:sticky sm:top-6 z-40 px-4 sm:px-6 mb-6 w-full max-w-6xl mx-auto">
-        <div className="bg-black/40 backdrop-blur-2xl border border-white/10 sm:rounded-[2rem] px-6 py-3 shadow-2xl glass-card">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center justify-between sm:justify-start sm:space-x-8">
-              <div className="flex items-center space-x-3">
-                <Logo className="w-8 h-8" />
-                <h1 className="text-xl font-serif font-bold text-white shrink-0">
-                  Nerd<span className="text-red-700">Shelf</span>
-                </h1>
-              </div>
-
-              <nav className="hidden sm:flex items-center space-x-1 bg-white/5 p-1 rounded-xl border border-white/10">
-                <button
-                  onClick={() => setView("library")}
-                  className={cn(
-                    "px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
-                    view === "library"
-                      ? "bg-white text-zinc-900"
-                      : "text-zinc-500 hover:text-white",
-                  )}
-                >
-                  Library
-                </button>
-                <button
-                  onClick={() => setView("dashboard")}
-                  className={cn(
-                    "px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
-                    view === "dashboard"
-                      ? "bg-white text-zinc-900"
-                      : "text-zinc-500 hover:text-white",
-                  )}
-                >
-                  Stats
-                </button>
-                <button
-                  onClick={() => setView("wishlist")}
-                  className={cn(
-                    "px-3 py-1 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
-                    view === "wishlist"
-                      ? "bg-white text-zinc-900"
-                      : "text-zinc-500 hover:text-white",
-                  )}
-                >
-                  Wishlist
-                </button>
-              </nav>
-
-              <div className="sm:hidden flex items-center space-x-2">
-                <button
-                  onClick={() => signOut(auth)}
-                  className="p-2 text-zinc-500 hover:text-white transition-colors"
-                >
-                  <LogOut className="w-5 h-5" />
-                </button>
-              </div>
+      <header className="fixed top-0 left-0 right-0 z-50 w-full bg-[#0b0b0d]/80 backdrop-blur-xl border-b border-white/10 shadow-lg">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3">
+          <div className="flex items-center justify-between gap-4">
+            
+            {/* Logo */}
+            <div className="flex items-center space-x-3 shrink-0">
+              <Logo className="w-8 h-8" />
+              <h1 className="text-xl font-serif font-bold text-white hidden sm:block">
+                Nerd<span className="text-[var(--color-brand-orange)]">Shelf</span>
+              </h1>
             </div>
 
-            {(view === "library" || view === "wishlist") && (
-              <div className="flex flex-col sm:flex-row flex-1 sm:items-center gap-3 max-w-2xl w-full">
-                <div className="relative flex-1 w-full">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
-                  <input
-                    className="w-full bg-white/5 border border-white/10 rounded-xl py-2 pl-10 pr-4 text-xs text-white focus:outline-none focus:bg-white/10 transition-all"
-                    placeholder="Search library..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
+            {/* Search Bar - Fixed & always visible */}
+            <div className="flex-1 max-w-2xl relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              <input
+                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white focus:outline-none focus:border-[var(--color-brand-orange)] focus:bg-white/10 transition-all placeholder-zinc-500"
+                placeholder="Search your library..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
 
-                <div className="flex items-center justify-end sm:justify-start space-x-2 shrink-0 w-full sm:w-auto">
-                  <button
-                    onClick={() => {
-                      setIsSelectionMode(!isSelectionMode);
-                      if (isSelectionMode) setSelectedIds([]);
-                    }}
-                    className={cn(
-                      "p-2 rounded-lg border transition-all flex items-center space-x-2",
-                      isSelectionMode
-                        ? "bg-white text-zinc-900 border-white/30"
-                        : "bg-transparent border-white/10 text-zinc-500 hover:text-white",
-                    )}
-                    title="Selection Mode"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest hidden md:block">
-                      Select
-                    </span>
-                  </button>
+            {/* Actions */}
+            <div className="flex items-center space-x-2 shrink-0 relative">
+              
+              {/* Filters Button */}
+              <button
+                onClick={() => {
+                  setIsFilterMenuOpen(!isFilterMenuOpen);
+                  setIsProfileMenuOpen(false);
+                }}
+                className={cn(
+                  "p-2.5 rounded-xl border transition-all flex items-center space-x-2",
+                  isFilterMenuOpen || search || isSelectionMode || sortBy !== 'date'
+                    ? "bg-white/10 border-white/30 text-white"
+                    : "bg-transparent border-transparent hover:bg-white/5 text-zinc-400 hover:text-white"
+                )}
+                title="Filters & Display"
+              >
+                <Filter className="w-5 h-5" />
+                <span className="hidden md:block text-xs font-bold uppercase tracking-widest">Filter</span>
+              </button>
 
-                  <button
-                    onClick={() => setGroupBySeries(!groupBySeries)}
-                    className={cn(
-                      "p-2 rounded-lg border transition-all",
-                      groupBySeries
-                        ? "bg-white/10 border-white/20 text-white"
-                        : "bg-transparent border-white/10 text-zinc-500 hover:text-white",
-                    )}
-                    title="Group by Series"
-                  >
-                    <Layers className="w-4 h-4" />
-                  </button>
+              {/* Profile / Menu Button */}
+              <button
+                onClick={() => {
+                  setIsProfileMenuOpen(!isProfileMenuOpen);
+                  setIsFilterMenuOpen(false);
+                }}
+                className={cn(
+                  "p-2.5 rounded-xl border transition-all",
+                  isProfileMenuOpen
+                    ? "bg-white/10 border-white/30 text-white"
+                    : "bg-transparent border-transparent hover:bg-white/5 text-zinc-400 hover:text-white"
+                )}
+              >
+                <UserIcon className="w-5 h-5" />
+              </button>
 
-                  <div className="relative">
+              {/* Filters Dropdown */}
+              {isFilterMenuOpen && (
+                <div className="absolute top-full right-12 mt-2 w-64 bg-[#121215] border border-white/10 rounded-2xl shadow-2xl p-4 z-50 flex flex-col gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Sort By</label>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as SortOption)}
+                      className="w-full bg-white/5 border border-white/10 text-sm font-bold text-white rounded-lg px-3 py-2 focus:outline-none"
+                    >
+                      <option value="date" className="bg-zinc-900">Newest</option>
+                      <option value="title" className="bg-zinc-900">Title</option>
+                      <option value="author" className="bg-zinc-900">Author</option>
+                      <option value="status" className="bg-zinc-900">Status</option>
+                      <option value="volume" className="bg-zinc-900">Volume</option>
+                      <option value="series" className="bg-zinc-900">Series</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2 pt-2 border-t border-white/5">
                     <button
-                      onClick={() => setIsFilterMenuOpen(!isFilterMenuOpen)}
+                      onClick={() => setGroupBySeries(!groupBySeries)}
                       className={cn(
-                        "p-2 rounded-lg border transition-all flex items-center space-x-2",
-                        filter !== "all"
-                          ? "bg-white/10 border-white/20 text-white"
-                          : "bg-transparent border-white/10 text-zinc-500 hover:text-white",
+                        "w-full flex items-center justify-between p-2 rounded-lg transition-all",
+                        groupBySeries ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white"
                       )}
                     >
-                      <Filter className="w-4 h-4" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest hidden lg:block">
-                        {filter === "all"
-                          ? "All"
-                          : filter === "gdr"
-                            ? "RPG"
-                            : filter}
-                      </span>
+                      <div className="flex items-center space-x-2">
+                        <Layers className="w-4 h-4" />
+                        <span className="text-sm font-bold">Group by Series</span>
+                      </div>
+                      {groupBySeries && <CheckCircle2 className="w-4 h-4 text-[var(--color-brand-orange)]" />}
                     </button>
-
-                    <AnimatePresence>
-                      {isFilterMenuOpen && (
-                        <>
-                          <div
-                            className="fixed inset-0 z-10"
-                            onClick={() => setIsFilterMenuOpen(false)}
-                          />
-                          <motion.div
-                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                            className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl overflow-hidden z-20 max-h-96 overflow-y-auto"
-                          >
-                            <div className="py-2">
-                              {[
-                                {
-                                  id: "all",
-                                  label: "All Collections",
-                                  color: "bg-white text-zinc-900",
-                                },
-                                {
-                                  id: "book",
-                                  label: "Books",
-                                  color: "btn-book text-white",
-                                },
-                                {
-                                  id: "manga",
-                                  label: "Manga",
-                                  color: "btn-manga text-white",
-                                },
-                                {
-                                  id: "gdr",
-                                  label: "RPG",
-                                  color: "btn-gdr text-white",
-                                },
-                                ...allTags.map((tag) => ({
-                                  id: tag,
-                                  label: tag,
-                                  color: "bg-white/20 text-white",
-                                })),
-                              ].map((cat, idx) => (
-                                <button
-                                  key={cat.id}
-                                  onClick={() => {
-                                    setFilter(cat.id as any);
-                                    setIsFilterMenuOpen(false);
-                                  }}
-                                  className={cn(
-                                    "w-full px-4 py-2.5 text-left text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-between",
-                                    filter === cat.id
-                                      ? "bg-white/10 text-white"
-                                      : "text-zinc-500 hover:bg-white/5",
-                                    idx === 4 &&
-                                      "border-t border-white/10 mt-1 pt-3", // Add separation before tags
-                                  )}
-                                >
-                                  {cat.label}
-                                  {filter === cat.id && (
-                                    <div
-                                      className={cn(
-                                        "w-2 h-2 rounded-full",
-                                        [
-                                          "all",
-                                          "book",
-                                          "manga",
-                                          "gdr",
-                                        ].includes(cat.id)
-                                          ? cat.color
-                                          : "bg-purple-500",
-                                      )}
-                                    />
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                          </motion.div>
-                        </>
+                    <button
+                      onClick={() => {
+                        setIsSelectionMode(!isSelectionMode);
+                        if (isSelectionMode) setSelectedIds([]);
+                      }}
+                      className={cn(
+                        "w-full flex items-center justify-between p-2 rounded-lg transition-all",
+                        isSelectionMode ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white"
                       )}
-                    </AnimatePresence>
+                    >
+                      <div className="flex items-center space-x-2">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span className="text-sm font-bold">Selection Mode</span>
+                      </div>
+                      {isSelectionMode && <CheckCircle2 className="w-4 h-4 text-[var(--color-brand-orange)]" />}
+                    </button>
                   </div>
-
-                  <button
-                    onClick={handleExportData}
-                    className="p-2 rounded-lg border bg-transparent border-white/10 text-zinc-500 hover:text-white transition-all"
-                    title="Download Backup"
-                  >
-                    <Download className="w-4 h-4" />
-                  </button>
-
-                  <button
-                    onClick={handleImportData}
-                    className="p-2 rounded-lg border bg-transparent border-white/10 text-zinc-500 hover:text-white transition-all"
-                    title="Upload Backup"
-                  >
-                    <Upload className="w-4 h-4" />
-                  </button>
-
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as SortOption)}
-                    className="bg-white/5 border border-white/10 text-[9px] uppercase font-bold tracking-widest text-zinc-500 rounded-lg px-2 py-2 focus:outline-none"
-                  >
-                    <option value="date" className="bg-zinc-900">
-                      Newest
-                    </option>
-                    <option value="title" className="bg-zinc-900">
-                      Title
-                    </option>
-                    <option value="author" className="bg-zinc-900">
-                      Author
-                    </option>
-                    <option value="status" className="bg-zinc-900">
-                      Status
-                    </option>
-                    <option value="volume" className="bg-zinc-900">
-                      Volume
-                    </option>
-                  </select>
-
-                  <button
-                    onClick={() => signOut(auth)}
-                    className="hidden sm:block p-2 text-zinc-500 hover:text-white transition-colors"
-                  >
-                    <LogOut className="w-4 h-4" />
-                  </button>
                 </div>
-              </div>
-            )}
+              )}
 
-            {view !== "library" && (
-              <button
-                onClick={() => signOut(auth)}
-                className="hidden sm:block p-2 text-zinc-500 hover:text-white transition-colors"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            )}
+              {/* Profile Menu Dropdown */}
+              {isProfileMenuOpen && (
+                <div className="absolute top-full right-0 mt-2 w-64 bg-[#121215] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
+                  <div className="p-2 space-y-1 border-b border-white/5">
+                    <div className="px-3 py-2 text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Views</div>
+                    <button onClick={() => { setView('shelf'); setIsProfileMenuOpen(false); }} className={cn("w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all", view === 'shelf' ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white")}>
+                      <Layers className="w-4 h-4" /> <span className="text-sm font-bold">Shelf View</span>
+                    </button>
+                    <button onClick={() => { setView('library'); setIsProfileMenuOpen(false); }} className={cn("w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all", view === 'library' ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white")}>
+                      <Book className="w-4 h-4" /> <span className="text-sm font-bold">Grid View</span>
+                    </button>
+                    <button onClick={() => { setView('dashboard'); setIsProfileMenuOpen(false); }} className={cn("w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all", view === 'dashboard' ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white")}>
+                      <Settings className="w-4 h-4" /> <span className="text-sm font-bold">Statistics</span>
+                    </button>
+                    <button onClick={() => { setView('wishlist'); setIsProfileMenuOpen(false); }} className={cn("w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all", view === 'wishlist' ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white")}>
+                      <Heart className="w-4 h-4" /> <span className="text-sm font-bold">Wishlist</span>
+                    </button>
+                  </div>
+                  <div className="p-2 space-y-1 border-b border-white/5">
+                    <div className="px-3 py-2 text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Data</div>
+                    <button onClick={() => { handleExportData(); setIsProfileMenuOpen(false); }} className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-all">
+                      <Download className="w-4 h-4" /> <span className="text-sm font-bold">Export Backup</span>
+                    </button>
+                    <button onClick={() => { handleImportData(); setIsProfileMenuOpen(false); }} className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-all">
+                      <Upload className="w-4 h-4" /> <span className="text-sm font-bold">Import Backup</span>
+                    </button>
+                  </div>
+                  <div className="p-2">
+                    <button onClick={() => signOut(auth)} className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
+                      <LogOut className="w-4 h-4" /> <span className="text-sm font-bold">Logout</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-
-          {view === "library" && (
-            <div className="mt-3 border-t border-white/10" />
-          )}
         </div>
       </header>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto">
+      <main className="max-w-6xl mx-auto pt-24 min-h-screen">
         {view === "dashboard" ? (
           <Dashboard items={items} />
+        ) : view === "shelf" ? (
+          <ShelfView 
+             items={filteredItems} 
+             onEdit={(item) => {
+               setEditingItem(item);
+               setIsModalOpen(true);
+             }}
+             
+          />
         ) : (
           <div className="p-6 space-y-10">
             <AnimatePresence mode="popLayout">
@@ -3422,6 +3326,18 @@ export default function App() {
         </button>
 
         <button
+          onClick={() => setView("shelf")}
+          className={cn(
+            "flex flex-col items-center space-y-1",
+            view === "shelf" ? "text-white" : "text-zinc-500",
+          )}
+        >
+          <Layers className="w-6 h-6" />
+          <span className="text-[10px] font-bold uppercase tracking-widest">
+            Shelf
+          </span>
+        </button>
+        <button
           onClick={() => setView("library")}
           className={cn(
             "flex flex-col items-center space-y-1",
@@ -3430,7 +3346,7 @@ export default function App() {
         >
           <Book className="w-6 h-6" />
           <span className="text-[10px] font-bold uppercase tracking-widest">
-            Library
+            Grid
           </span>
         </button>
 
