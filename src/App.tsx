@@ -909,7 +909,7 @@ const ItemModal = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-white/90 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm"
       onKeyDown={(e) => {
         if (e.key === "Enter" && !e.shiftKey && formData.title) {
           handleSave();
@@ -919,7 +919,7 @@ const ItemModal = ({
       <motion.div
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
-        className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-t-[2rem] sm:rounded-[2rem] p-6 space-y-5 max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl"
+        className="bg-zinc-900 sm:border border-white/10 w-full h-[95vh] sm:h-auto sm:w-11/12 sm:max-w-3xl rounded-t-[1.5rem] sm:rounded-[2rem] p-5 sm:p-8 space-y-5 sm:space-y-6 max-h-[95vh] sm:max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
       >
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-serif font-bold text-white">
@@ -985,7 +985,7 @@ const ItemModal = ({
                   type="number"
                   min="1"
                   max="300"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none"
                   value={bulkCount}
                   onChange={(e) => setBulkCount(parseInt(e.target.value) || 1)}
                 />
@@ -996,7 +996,7 @@ const ItemModal = ({
             </div>
           )}
 
-          <div className="flex space-x-4">
+          <div className="flex flex-row space-x-4 items-start">
             <div className="w-20 h-28 flex-shrink-0 bg-black/40 rounded-xl overflow-hidden border border-white/10">
               {formData.coverUrl ? (
                 <img
@@ -1017,7 +1017,7 @@ const ItemModal = ({
                   Title
                 </label>
                 <input
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
                   placeholder="Title..."
                   value={formData.title}
                   onChange={(e) =>
@@ -1078,7 +1078,7 @@ const ItemModal = ({
               Series Name (Optional)
             </label>
             <input
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
               placeholder="e.g. One Piece, Harry Potter..."
               value={formData.seriesName}
               onChange={(e) =>
@@ -1122,14 +1122,14 @@ const ItemModal = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
               <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
                 Pages Read
               </label>
               <input
                 type="number"
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
                 placeholder="0"
                 value={formData.pagesRead}
                 onChange={(e) =>
@@ -1147,7 +1147,7 @@ const ItemModal = ({
               </label>
               <input
                 type="number"
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
                 placeholder="0"
                 value={formData.totalPages}
                 onChange={(e) =>
@@ -1168,7 +1168,7 @@ const ItemModal = ({
             <input
               type="number"
               step="0.01"
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
               placeholder="0.00"
               value={formData.price}
               onChange={(e) =>
@@ -1185,7 +1185,7 @@ const ItemModal = ({
             <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
               Status
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-2">
               {[
                 { id: "unread", label: "To Read" },
                 { id: "reading", label: "Reading" },
@@ -1220,7 +1220,7 @@ const ItemModal = ({
               Cover URL (Manual Fallback)
             </label>
             <input
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
               placeholder="Paste image URL here..."
               value={formData.coverUrl}
               onChange={(e) =>
@@ -1235,7 +1235,7 @@ const ItemModal = ({
             </label>
             <div className="relative">
               <input
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20"
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
                 placeholder="Author..."
                 list="authors-list"
                 value={formData.author}
@@ -1258,7 +1258,7 @@ const ItemModal = ({
               Plot / Description
             </label>
             <textarea
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[100px] resize-none"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[100px] resize-none"
               placeholder="Enter plot summary or description..."
               value={formData.description}
               onChange={(e) =>
@@ -1273,7 +1273,7 @@ const ItemModal = ({
             </label>
             <div className="relative">
               <input
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-white/20"
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
                 placeholder="Type and press Enter to add..."
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
@@ -1330,7 +1330,7 @@ const ItemModal = ({
                 Reader's Diary / Review
               </label>
               <textarea
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[80px] resize-none"
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[80px] resize-none"
                 placeholder="What did you think? Notes after reading..."
                 value={formData.review}
                 onChange={(e) =>
@@ -1340,13 +1340,13 @@ const ItemModal = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             {(["book", "manga", "gdr"] as Category[]).map((cat) => (
               <button
                 key={cat}
                 onClick={() => setFormData({ ...formData, category: cat })}
                 className={cn(
-                  "p-2.5 rounded-xl border transition-all text-[9px] font-bold uppercase tracking-widest",
+                  "flex-1 p-2.5 rounded-xl border transition-all text-[9px] font-bold uppercase tracking-widest",
                   formData.category === cat
                     ? cat === "gdr"
                       ? "bg-red-900/40 border-red-700 text-red-400"
@@ -1374,7 +1374,7 @@ const ItemModal = ({
                   <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
                     Select Genre
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {[
                       "Horror",
                       "Poetry",
@@ -1408,7 +1408,7 @@ const ItemModal = ({
                     ISBN
                   </label>
                   <input
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
                     placeholder="ISBN-13..."
                     value={formData.isbn}
                     onChange={(e) =>
@@ -1429,7 +1429,7 @@ const ItemModal = ({
                   Volume Number
                 </label>
                 <input
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
                   placeholder="e.g. 1"
                   value={formData.totalVolumes}
                   onChange={(e) =>
@@ -1449,7 +1449,7 @@ const ItemModal = ({
                   Edition / System
                 </label>
                 <input
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
                   placeholder="D&D 5e, Pathfinder 2e, Cyberpunk RED..."
                   value={formData.system}
                   onChange={(e) =>
@@ -1990,11 +1990,11 @@ const DetailsModal = ({
     : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-white/90 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm">
       <motion.div
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
-        className="bg-zinc-900 border border-white/10 w-full max-w-lg rounded-t-[2rem] sm:rounded-[2rem] p-6 space-y-5 max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl"
+        className="bg-zinc-900 sm:border border-white/10 w-full h-[95vh] sm:h-auto sm:w-11/12 sm:max-w-3xl rounded-t-[1.5rem] sm:rounded-[2rem] p-5 sm:p-8 space-y-5 sm:space-y-6 max-h-[95vh] sm:max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
       >
         <div className="flex justify-between items-start">
           <div className="space-y-0.5">
@@ -2198,7 +2198,7 @@ const DetailsModal = ({
         </div>
 
         {/* Info Grid */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {item.genre && (
             <div className="bg-white/5 p-3 rounded-xl border border-white/10">
               <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
@@ -2433,7 +2433,7 @@ const BulkEditModal = ({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-white/90 backdrop-blur-md"
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm"
       onKeyDown={(e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           handleApply();
@@ -2443,7 +2443,7 @@ const BulkEditModal = ({
       <motion.div
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2rem] p-6 space-y-6 shadow-2xl"
+        className="bg-zinc-900 sm:border border-white/10 w-full sm:w-11/12 sm:max-w-3xl rounded-t-[1.5rem] sm:rounded-[2rem] p-5 sm:p-8 space-y-5 sm:space-y-6 max-h-[95vh] sm:max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
       >
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-serif font-bold text-white">Mass Edit</h2>
@@ -2461,7 +2461,7 @@ const BulkEditModal = ({
               Set Series Name
             </label>
             <input
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
               placeholder="Series name..."
               value={seriesName}
               onChange={(e) => setSeriesName(e.target.value)}
@@ -2473,7 +2473,7 @@ const BulkEditModal = ({
               Set Author
             </label>
             <input
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
               placeholder="Author name..."
               value={author}
               onChange={(e) => setAuthor(e.target.value)}
@@ -2484,7 +2484,7 @@ const BulkEditModal = ({
             <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
               Set Status
             </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               {(["unread", "reading", "read"] as Status[]).map((s) => (
                 <button
                   key={s}
@@ -2507,7 +2507,7 @@ const BulkEditModal = ({
               Set Description
             </label>
             <textarea
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20 min-h-[80px] resize-none"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 min-h-[80px] resize-none"
               placeholder="New description for all selected items..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -2521,7 +2521,7 @@ const BulkEditModal = ({
             <input
               type="number"
               step="0.01"
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-white/20"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
               placeholder="0.00"
               value={price}
               onChange={(e) =>
@@ -2790,7 +2790,7 @@ export default function App() {
 
     try {
       if (editingItem) {
-        await updateDoc(doc(db, "libraryItems", editingItem.id), cleanData);
+        await updateDoc(doc(db, "libraryItems", editingItem.id), { ...cleanData, updatedAt: serverTimestamp() });
       } else {
         await addDoc(collection(db, "libraryItems"), {
           ...cleanData,
@@ -2809,7 +2809,7 @@ export default function App() {
 
   const handleUpdateStatus = async (id: string, status: Status) => {
     try {
-      await updateDoc(doc(db, "libraryItems", id), { status });
+      await updateDoc(doc(db, "libraryItems", id), { status, updatedAt: serverTimestamp() });
       if (selectedItemDetails?.id === id) {
         setSelectedItemDetails((prev) => (prev ? { ...prev, status } : null));
       }
@@ -2820,7 +2820,7 @@ export default function App() {
 
   const handleUpdatePages = async (id: string, pagesRead: number) => {
     try {
-      await updateDoc(doc(db, "libraryItems", id), { pagesRead });
+      await updateDoc(doc(db, "libraryItems", id), { pagesRead, updatedAt: serverTimestamp() });
       if (selectedItemDetails?.id === id) {
         setSelectedItemDetails((prev) =>
           prev ? { ...prev, pagesRead } : null,
@@ -2846,7 +2846,7 @@ export default function App() {
         updates.loanDate = deleteField();
       }
 
-      await updateDoc(doc(db, "libraryItems", id), updates);
+      await updateDoc(doc(db, "libraryItems", id), { ...updates, updatedAt: serverTimestamp() });
       if (selectedItemDetails?.id === id) {
         setSelectedItemDetails((prev) => {
           if (!prev) return null;
@@ -2893,7 +2893,7 @@ export default function App() {
   const handleBulkUpdate = async (updates: any) => {
     try {
       const promises = selectedIds.map((id) =>
-        updateDoc(doc(db, "libraryItems", id), updates),
+        updateDoc(doc(db, "libraryItems", id), { ...updates, updatedAt: serverTimestamp() }),
       );
       await Promise.all(promises);
       setSelectedIds([]);
@@ -3046,7 +3046,7 @@ export default function App() {
             <div className="flex-1 max-w-2xl relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
               <input
-                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white focus:outline-none focus:border-[var(--color-brand-orange)] focus:bg-white/10 transition-all placeholder-zinc-500"
+                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-base sm:text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-[var(--color-brand-orange)] focus:bg-white/10 transition-all placeholder-zinc-500"
                 placeholder="Search your library..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
