@@ -59,6 +59,8 @@ import {
   Upload,
   User as UserIcon,
   Settings,
+  ShoppingBag,
+  Check,
 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import { motion, AnimatePresence } from "framer-motion";
@@ -66,6 +68,7 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { Logo } from "./components/Logo";
 import { ShelfView } from "./components/ShelfView";
+import { BookCover } from "./components/BookCover";
 import {
   PieChart,
   Pie,
@@ -509,6 +512,7 @@ const ItemCard = ({
   item,
   onOpenDetails,
   onEdit,
+  onMarkAsBought,
   isSelected,
   onSelect,
   selectionMode,
@@ -516,6 +520,7 @@ const ItemCard = ({
   item: LibraryItem;
   onOpenDetails: (item: LibraryItem) => void;
   onEdit?: (item: LibraryItem) => void;
+  onMarkAsBought?: (item: LibraryItem) => void;
   key?: React.Key;
   isSelected?: boolean;
   onSelect?: (id: string) => void;
@@ -583,50 +588,48 @@ const ItemCard = ({
           }
           e.stopPropagation();
         }}
-        className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] flex-shrink-0 bg-black/40 rounded-xl overflow-hidden relative shadow-2xl border border-white/10 group-hover:border-white/20 transition-all"
+        className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] flex-shrink-0 bg-black/40 rounded-xl overflow-hidden relative shadow-2xl border border-white/10 group-hover:border-white/20 transition-all text-left"
       >
-        {item.coverUrl ? (
-          <>
-            <img
-              src={item.coverUrl}
-              alt={item.title}
-              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-              referrerPolicy="no-referrer"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-60 group-hover:opacity-40 transition-opacity" />
-          </>
-        ) : (
-          <div
-            className={cn(
-              "w-full h-full flex flex-col items-center justify-center space-y-2 bg-black/60",
-              config.color,
-            )}
-          >
-            <div className="p-3 bg-white/5 rounded-full border border-white/10 shadow-xl backdrop-blur-md relative z-10">
-              <Icon className="w-6 h-6 sm:w-8 sm:h-8 opacity-60 drop-shadow-lg" />
-            </div>
-            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
-          </div>
-        )}
+        <BookCover
+          title={item.title}
+          author={item.author}
+          category={item.category}
+          system={item.system}
+          volumeNumber={item.volumeNumber}
+          coverUrl={item.coverUrl}
+        />
         {item.loanedTo && (
-          <div className="absolute top-2 left-2 bg-amber-500 text-white text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded shadow-lg">
+          <div className="absolute top-2 left-2 bg-amber-500 text-white text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded shadow-lg z-30">
             Loaned
           </div>
         )}
+        {item.isWishlist && onMarkAsBought && !selectionMode && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMarkAsBought(item);
+            }}
+            className="absolute top-2 left-2 z-30 p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-xl transition-all hover:scale-110 active:scale-95 cursor-pointer"
+            title="Segna come comprato"
+          >
+            <Check className="w-3 h-3 stroke-[3]" />
+          </button>
+        )}
         {item.isWishlist && (
-          <div className="absolute top-2 right-2 bg-rose-500/90 text-white p-1 rounded-full shadow-lg">
+          <div className="absolute top-2 right-2 bg-rose-500/90 text-white p-1 rounded-full shadow-lg z-30">
             <Heart className="w-3 h-3 fill-white" />
           </div>
         )}
         {item.volumeNumber && (
-          <div className="absolute bottom-2 right-2 bg-zinc-900/90 border border-white/20 text-white w-7 h-7 rounded-full shadow-lg flex items-center justify-center backdrop-blur-sm">
+          <div className="absolute bottom-2 right-2 bg-zinc-900/90 border border-white/20 text-white w-7 h-7 rounded-full shadow-lg flex items-center justify-center backdrop-blur-sm z-30">
             <span className="font-bold text-[11px] leading-none">{item.volumeNumber}</span>
           </div>
         )}
         {selectionMode && (
           <div
             className={cn(
-              "absolute inset-0 flex items-center justify-center transition-all",
+              "absolute inset-0 flex items-center justify-center transition-all z-30",
               isSelected
                 ? "bg-white/20"
                 : "bg-white/5 opacity-0 group-hover:opacity-100",
@@ -770,6 +773,21 @@ const ItemCard = ({
             </div>
           </div>
         ) : null}
+
+        {item.isWishlist && onMarkAsBought && !selectionMode && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMarkAsBought(item);
+            }}
+            className="w-full mt-3 py-2 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer group/buy"
+            title="Segna come comprato e sposta nella libreria"
+          >
+            <ShoppingBag className="w-3.5 h-3.5 group-hover/buy:scale-110 transition-transform" />
+            <span>Segna come Comprato</span>
+          </button>
+        )}
       </div>
     </motion.div>
   );
@@ -1967,14 +1985,14 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
                     key={item.id}
                     className="flex items-center space-x-3 p-2 bg-white/5 rounded-xl border border-white/10"
                   >
-                    <div className="w-10 h-14 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
-                      {item.coverUrl && (
-                        <img
-                          src={item.coverUrl}
-                          className="w-full h-full object-cover"
-                          alt=""
-                        />
-                      )}
+                    <div className="w-10 h-14 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0 border border-white/10 shadow-sm relative">
+                      <BookCover
+                        title={item.title}
+                        author={item.author}
+                        category={item.category}
+                        coverUrl={item.coverUrl}
+                        size="sm"
+                      />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-bold text-white truncate">
@@ -2015,6 +2033,7 @@ const DetailsModal = ({
   onUpdateLoan,
   onEdit,
   onDelete,
+  onMarkAsBought,
 }: {
   item: LibraryItem | null;
   isOpen: boolean;
@@ -2024,6 +2043,7 @@ const DetailsModal = ({
   onUpdateLoan: (id: string, loanedTo: string, loanDate: Date | null) => void;
   onEdit: (item: LibraryItem) => void;
   onDelete: (id: string) => void;
+  onMarkAsBought?: (item: LibraryItem) => void;
 }) => {
   if (!item || !isOpen) return null;
 
@@ -2086,6 +2106,19 @@ const DetailsModal = ({
             )}
           </div>
           <div className="flex items-center space-x-2">
+            {item.isWishlist && onMarkAsBought && (
+              <button
+                onClick={() => {
+                  onMarkAsBought(item);
+                  onClose();
+                }}
+                className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all cursor-pointer active:scale-95"
+                title="Segna come comprato"
+              >
+                <ShoppingBag className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Comprato</span>
+              </button>
+            )}
             <button
               onClick={() => {
                 onEdit(item);
@@ -2116,25 +2149,46 @@ const DetailsModal = ({
           </div>
         </div>
 
-        <div className="flex space-x-5">
-          <div className="w-24 h-36 flex-shrink-0 bg-black/40 rounded-xl overflow-hidden border border-white/10 shadow-lg">
-            {item.coverUrl ? (
-              <img
-                src={item.coverUrl}
-                className="w-full h-full object-contain"
-                alt={item.title}
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <div
-                className={cn(
-                  "w-full h-full flex items-center justify-center",
-                  config.color,
-                )}
-              >
-                <Icon className="w-10 h-10 opacity-20" />
+        {item.isWishlist && (
+          <div className="p-3.5 sm:p-4 bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-emerald-500/10 border border-rose-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+            <div className="flex items-center space-x-3">
+              <div className="p-2 bg-rose-500/20 text-rose-400 rounded-xl shrink-0">
+                <Heart className="w-5 h-5 fill-rose-500/30" />
               </div>
+              <div>
+                <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <span>Presente nella tua Wishlist</span>
+                </p>
+                <p className="text-[11px] text-zinc-400">
+                  Non fa ancora parte della tua libreria fisica.
+                </p>
+              </div>
+            </div>
+            {onMarkAsBought && (
+              <button
+                onClick={() => {
+                  onMarkAsBought(item);
+                  onClose();
+                }}
+                className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95 shrink-0"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>Segna come Comprato</span>
+              </button>
             )}
+          </div>
+        )}
+
+        <div className="flex space-x-5">
+          <div className="w-24 h-36 sm:w-28 sm:h-40 flex-shrink-0 bg-black/40 rounded-xl overflow-hidden border border-white/10 shadow-lg relative">
+            <BookCover
+              title={item.title}
+              author={item.author}
+              category={item.category}
+              system={item.system}
+              volumeNumber={item.volumeNumber}
+              coverUrl={item.coverUrl}
+            />
           </div>
           <div className="flex-1 space-y-4">
             <div className="space-y-2">
@@ -2394,27 +2448,43 @@ const DetailsModal = ({
         </div>
 
         {/* Footer Action Bar */}
-        <div className="pt-4 border-t border-white/10 flex items-center justify-between gap-3">
+        <div className="pt-4 border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
           <button
             onClick={() => {
               onDelete(item.id);
               onClose();
             }}
-            className="px-3.5 py-2.5 text-zinc-400 hover:text-red-400 text-xs font-semibold rounded-xl flex items-center gap-1.5 hover:bg-red-500/10 transition-colors"
+            className="px-3.5 py-2.5 text-zinc-400 hover:text-red-400 text-xs font-semibold rounded-xl flex items-center gap-1.5 hover:bg-red-500/10 transition-colors cursor-pointer"
           >
             <Trash2 className="w-4 h-4" />
             <span>Delete Item</span>
           </button>
-          <button
-            onClick={() => {
-              onEdit(item);
-              onClose();
-            }}
-            className="flex-1 max-w-xs py-2.5 bg-white text-zinc-900 font-bold text-xs rounded-xl hover:bg-zinc-200 flex items-center justify-center gap-2 shadow-lg transition-all"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-            <span>Edit Item Details</span>
-          </button>
+
+          <div className="flex items-center gap-2">
+            {item.isWishlist && onMarkAsBought && (
+              <button
+                onClick={() => {
+                  onMarkAsBought(item);
+                  onClose();
+                }}
+                className="py-2.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-lg transition-all cursor-pointer active:scale-95"
+              >
+                <ShoppingBag className="w-3.5 h-3.5" />
+                <span>Segna come Comprato</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => {
+                onEdit(item);
+                onClose();
+              }}
+              className="py-2.5 px-4 bg-white text-zinc-900 font-bold text-xs rounded-xl hover:bg-zinc-200 flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              <span>Edit Item Details</span>
+            </button>
+          </div>
         </div>
       </motion.div>
     </div>
@@ -2471,12 +2541,16 @@ const BulkToolbar = ({
   onEdit,
   onDelete,
   onClear,
+  onMarkAsBought,
+  isWishlist,
 }: {
   count: number;
   totalPrice: number;
   onEdit: () => void;
   onDelete: () => void;
   onClear: () => void;
+  onMarkAsBought?: () => void;
+  isWishlist?: boolean;
 }) => (
   <motion.div
     initial={{ y: 100 }}
@@ -2492,6 +2566,16 @@ const BulkToolbar = ({
         </span>
       )}
     </div>
+    {isWishlist && onMarkAsBought && (
+      <button
+        onClick={onMarkAsBought}
+        className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-lg active:scale-95 cursor-pointer"
+        title="Segna selezionati come comprati"
+      >
+        <ShoppingBag className="w-4 h-4" />
+        <span className="hidden sm:inline">Comprati ({count})</span>
+      </button>
+    )}
     <button
       onClick={onEdit}
       className="p-3 bg-white/5 hover:bg-white/10 text-white rounded-xl transition-all"
@@ -2749,6 +2833,14 @@ export default function App() {
   const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; submessage?: string } | null>(null);
+
+  const showToast = (message: string, submessage?: string) => {
+    setToast({ message, submessage });
+    setTimeout(() => {
+      setToast((curr) => (curr?.message === message ? null : curr));
+    }, 4000);
+  };
 
   useEffect(() => {
     localStorage.setItem("nerdshelf_sort", sortBy);
@@ -3222,6 +3314,47 @@ export default function App() {
     }
   };
 
+  const handleMarkAsBought = async (item: LibraryItem) => {
+    try {
+      await safeUpdateDoc(doc(db, "libraryItems", item.id), {
+        isWishlist: false,
+        status: item.status || "unread",
+      });
+      if (selectedItemDetails && selectedItemDetails.id === item.id) {
+        setSelectedItemDetails((prev) =>
+          prev ? { ...prev, isWishlist: false, status: item.status || "unread" } : null,
+        );
+      }
+      showToast(
+        `"${item.title}" segnato come comprato!`,
+        "Spostato con successo dalla wishlist alla tua libreria 📚",
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${item.id}`);
+    }
+  };
+
+  const handleBulkMarkAsBought = async () => {
+    if (selectedIds.length === 0) return;
+    try {
+      const promises = selectedIds.map((id) =>
+        safeUpdateDoc(doc(db, "libraryItems", id), {
+          isWishlist: false,
+          status: "unread",
+        }),
+      );
+      await Promise.all(promises);
+      showToast(
+        `${selectedIds.length} libri segnati come comprati!`,
+        "Spostati con successo nella tua libreria personale 📚",
+      );
+      setSelectedIds([]);
+      setIsSelectionMode(false);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, "bulk-bought");
+    }
+  };
+
   const toggleSelection = (id: string) => {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
@@ -3403,6 +3536,23 @@ export default function App() {
             {/* Actions */}
             <div className="flex items-center space-x-2 shrink-0 relative">
               
+              {/* Wishlist Button */}
+              <button
+                onClick={() => setView(view === "wishlist" ? "library" : "wishlist")}
+                className={cn(
+                  "p-2.5 rounded-xl border transition-all flex items-center space-x-2 cursor-pointer",
+                  view === "wishlist"
+                    ? "bg-rose-500/20 border-rose-500/40 text-rose-300 shadow-lg shadow-rose-950/40"
+                    : "bg-transparent border-transparent hover:bg-white/5 text-zinc-400 hover:text-white"
+                )}
+                title={view === "wishlist" ? "Torna alla Libreria" : "Vai alla Wishlist"}
+              >
+                <Heart className={cn("w-5 h-5", view === "wishlist" && "fill-rose-400")} />
+                <span className="hidden lg:block text-xs font-bold uppercase tracking-widest">
+                  Wishlist
+                </span>
+              </button>
+
               {/* Filters Button */}
               <button
                 onClick={() => {
@@ -3565,6 +3715,54 @@ export default function App() {
               </div>
             )}
 
+            {/* Dedicated Wishlist Header Banner */}
+            {view === "wishlist" && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-gradient-to-r from-rose-950/40 via-purple-950/20 to-zinc-900/80 border border-rose-500/20 rounded-2xl shadow-xl">
+                <div className="flex items-center space-x-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0 shadow-inner">
+                    <Heart className="w-6 h-6 fill-rose-500/30" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-serif font-bold text-white flex items-center gap-2">
+                      <span>La tua Wishlist</span>
+                      <span className="text-xs font-mono font-normal px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                        {filteredItems.length} {filteredItems.length === 1 ? "libro" : "libri"}
+                      </span>
+                    </h2>
+                    <p className="text-xs text-zinc-400 mt-1">
+                      Clicca sul tasto rapido <strong className="text-emerald-400 font-semibold">"Comprato"</strong> su qualsiasi scheda per spostare immediatamente il libro nella tua libreria!
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => {
+                      setEditingItem({
+                        id: "",
+                        title: "",
+                        author: "",
+                        category: "book",
+                        status: "unread",
+                        isWishlist: true,
+                      } as any);
+                      setIsModalOpen(true);
+                    }}
+                    className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-lg shadow-rose-950/50 transition-all cursor-pointer active:scale-95"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Aggiungi alla Wishlist</span>
+                  </button>
+                  <button
+                    onClick={() => setView("library")}
+                    className="px-3.5 py-2 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-semibold rounded-xl border border-white/10 transition-all cursor-pointer"
+                  >
+                    Torna alla Libreria
+                  </button>
+                </div>
+              </div>
+            )}
+
             <AnimatePresence mode="popLayout">
               {groupBySeries ? (
                 <motion.div key="grouped-view" className="space-y-10">
@@ -3597,6 +3795,7 @@ export default function App() {
                                   setEditingItem(item);
                                   setIsModalOpen(true);
                                 }}
+                                onMarkAsBought={handleMarkAsBought}
                                 isSelected={selectedIds.includes(item.id)}
                                 onSelect={toggleSelection}
                                 selectionMode={isSelectionMode}
@@ -3633,6 +3832,7 @@ export default function App() {
                               setEditingItem(item);
                               setIsModalOpen(true);
                             }}
+                            onMarkAsBought={handleMarkAsBought}
                             isSelected={selectedIds.includes(item.id)}
                             onSelect={toggleSelection}
                             selectionMode={isSelectionMode}
@@ -3656,6 +3856,7 @@ export default function App() {
                         setEditingItem(item);
                         setIsModalOpen(true);
                       }}
+                      onMarkAsBought={handleMarkAsBought}
                       isSelected={selectedIds.includes(item.id)}
                       onSelect={toggleSelection}
                       selectionMode={isSelectionMode}
@@ -3672,12 +3873,18 @@ export default function App() {
                   className="text-center py-20 space-y-4"
                 >
                   <div className="inline-flex p-6 rounded-full bg-white/5 text-zinc-700">
-                    <Filter className="w-12 h-12" />
+                    {view === "wishlist" ? (
+                      <Heart className="w-12 h-12 text-rose-500/40" />
+                    ) : (
+                      <Filter className="w-12 h-12" />
+                    )}
                   </div>
                   <div className="space-y-1">
                     <p className="text-zinc-400 font-medium">
                       {search
                         ? `No treasures found matching "${search}"`
+                        : view === "wishlist"
+                        ? "La tua wishlist è vuota. Aggiungi i libri che desideri acquistare o leggere in futuro!"
                         : "No treasures found in this section."}
                     </p>
                     {search && (
@@ -3686,14 +3893,32 @@ export default function App() {
                       </p>
                     )}
                   </div>
-                  {search && (
+                  {search ? (
                     <button
                       onClick={() => setSearch("")}
-                      className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all"
+                      className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
                     >
                       Clear Search
                     </button>
-                  )}
+                  ) : view === "wishlist" ? (
+                    <button
+                      onClick={() => {
+                        setEditingItem({
+                          id: "",
+                          title: "",
+                          author: "",
+                          category: "book",
+                          status: "unread",
+                          isWishlist: true,
+                        } as any);
+                        setIsModalOpen(true);
+                      }}
+                      className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-lg transition-all inline-flex items-center gap-1.5 cursor-pointer active:scale-95"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Aggiungi alla Wishlist</span>
+                    </button>
+                  ) : null}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -3823,6 +4048,8 @@ export default function App() {
               setIsSelectionMode(false);
               setSelectedIds([]);
             }}
+            isWishlist={view === "wishlist"}
+            onMarkAsBought={handleBulkMarkAsBought}
           />
         )}
       </AnimatePresence>
@@ -3857,6 +4084,7 @@ export default function App() {
           setIsModalOpen(true);
         }}
         onDelete={handleDeleteItem}
+        onMarkAsBought={handleMarkAsBought}
       />
 
       <AlertConfirmModal
@@ -3867,6 +4095,34 @@ export default function App() {
         showCancel={alertConfig.showCancel}
         onClose={() => setAlertConfig((prev) => ({ ...prev, isOpen: false }))}
       />
+
+      {/* Floating Toast Notification */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            className="fixed bottom-24 sm:bottom-10 left-1/2 -translate-x-1/2 z-50 bg-[#16161a]/95 border border-emerald-500/40 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center space-x-3.5 pointer-events-auto backdrop-blur-xl max-w-md w-[90vw] sm:w-auto"
+          >
+            <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-white truncate">{toast.message}</p>
+              {toast.submessage && (
+                <p className="text-xs text-zinc-400 truncate">{toast.submessage}</p>
+              )}
+            </div>
+            <button
+              onClick={() => setToast(null)}
+              className="text-zinc-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
