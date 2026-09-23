@@ -19,9 +19,10 @@ function getColorFromHash(hash: number): string {
 interface ShelfViewProps {
   items: any[];
   onEdit: (item: any) => void;
+  onOpenDetails?: (item: any) => void;
 }
 
-export function ShelfView({ items, onEdit }: ShelfViewProps) {
+export function ShelfView({ items, onEdit, onOpenDetails }: ShelfViewProps) {
   const groupedAndSorted = React.useMemo(() => {
     const arr = [...items];
     arr.sort((a, b) => {
@@ -102,7 +103,7 @@ export function ShelfView({ items, onEdit }: ShelfViewProps) {
           return (
             <div key={item.id} className="flex items-end justify-center h-[380px] pb-[48px] px-[1px] shrink-0">
               <motion.div
-                onClick={() => onEdit(item)}
+                onClick={() => onOpenDetails ? onOpenDetails(item) : onEdit(item)}
                 whileHover={{ y: -8 }}
                 className="spine-element relative cursor-pointer flex flex-col justify-end items-center group transition-shadow rounded-t-[3px] shrink-0"
                 style={{

@@ -59,7 +59,6 @@ import {
   Upload,
   User as UserIcon,
   Settings,
-  Filter,
 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import { motion, AnimatePresence } from "framer-motion";
@@ -177,6 +176,7 @@ interface LibraryItem {
   loanedTo?: string;
   loanDate?: any;
   description?: string;
+  notes?: string;
   rating?: number;
   review?: string;
   tags?: string[];
@@ -508,12 +508,14 @@ const StarRating = ({
 const ItemCard = ({
   item,
   onOpenDetails,
+  onEdit,
   isSelected,
   onSelect,
   selectionMode,
 }: {
   item: LibraryItem;
   onOpenDetails: (item: LibraryItem) => void;
+  onEdit?: (item: LibraryItem) => void;
   key?: React.Key;
   isSelected?: boolean;
   onSelect?: (id: string) => void;
@@ -543,6 +545,12 @@ const ItemCard = ({
     },
   };
 
+  const statusBadgeConfig: Record<Status, { label: string; color: string }> = {
+    unread: { label: "To Read", color: "text-zinc-400 bg-white/5 border-white/10" },
+    reading: { label: "Reading", color: "text-blue-400 bg-blue-500/10 border-blue-500/20" },
+    read: { label: "Finished", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+  };
+
   const config = categoryConfig[item.category];
   const Icon = config.icon;
 
@@ -553,7 +561,13 @@ const ItemCard = ({
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       whileHover={{ y: -5 }}
-      onClick={() => selectionMode && onSelect?.(item.id)}
+      onClick={() => {
+        if (selectionMode) {
+          onSelect?.(item.id);
+        } else {
+          onOpenDetails(item);
+        }
+      }}
       className={cn(
         "glass-card p-4 rounded-2xl flex flex-row sm:flex-col items-center sm:items-stretch space-x-4 sm:space-x-0 sm:space-y-4 group relative overflow-hidden cursor-pointer",
         config.border,
@@ -708,6 +722,31 @@ const ItemCard = ({
               </div>
             )}
           </div>
+
+          <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-white/5">
+            <span
+              className={cn(
+                "text-[8px] sm:text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded border",
+                statusBadgeConfig[item.status].color,
+              )}
+            >
+              {statusBadgeConfig[item.status].label}
+            </span>
+
+            {onEdit && !selectionMode && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onEdit(item);
+                }}
+                className="p-1 rounded-lg text-zinc-500 hover:text-white hover:bg-white/10 transition-colors opacity-80 sm:opacity-0 group-hover:opacity-100"
+                title="Edit Item"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {item.totalPages && item.totalPages > 0 ? (
@@ -769,6 +808,7 @@ const ItemModal = ({
     loanedTo: "",
     loanDate: null as any,
     description: "",
+    notes: "",
     rating: 0,
     review: "",
     tags: [] as string[],
@@ -824,6 +864,7 @@ const ItemModal = ({
         loanedTo: initialData.loanedTo || "",
         loanDate: initialData.loanDate || null,
         description: initialData.description || "",
+        notes: initialData.notes || initialData.description || "",
         rating: initialData.rating || 0,
         review: initialData.review || "",
         tags: initialData.tags || [],
@@ -849,6 +890,7 @@ const ItemModal = ({
         loanedTo: "",
         loanDate: null,
         description: "",
+        notes: "",
         rating: 0,
         review: "",
         tags: [],
@@ -909,7 +951,7 @@ const ItemModal = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md overflow-hidden"
       onKeyDown={(e) => {
         if (e.key === "Enter" && !e.shiftKey && formData.title) {
           handleSave();
@@ -917,9 +959,9 @@ const ItemModal = ({
       }}
     >
       <motion.div
-        initial={{ y: "100%" }}
-        animate={{ y: 0 }}
-        className="bg-zinc-900 sm:border border-white/10 w-full h-[95vh] sm:h-auto sm:w-11/12 sm:max-w-3xl rounded-t-[1.5rem] sm:rounded-[2rem] p-5 sm:p-8 space-y-5 sm:space-y-6 max-h-[95vh] sm:max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
+        initial={{ opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-4xl rounded-none sm:rounded-[2rem] p-4 sm:p-8 space-y-5 sm:space-y-6 overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
       >
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-serif font-bold text-white">
@@ -1258,11 +1300,26 @@ const ItemModal = ({
               Plot / Description
             </label>
             <textarea
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[100px] resize-none"
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[90px] resize-none"
               placeholder="Enter plot summary or description..."
               value={formData.description}
               onChange={(e) =>
                 setFormData({ ...formData, description: e.target.value })
+              }
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-[var(--color-brand-orange)] font-bold flex items-center gap-1">
+              <Edit3 className="w-3 h-3" />
+              <span>Personal Notes (Optional)</span>
+            </label>
+            <textarea
+              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-[var(--color-brand-orange)] placeholder:text-zinc-500 min-h-[80px] resize-none"
+              placeholder="Notes on edition, reading thoughts, quotes, personal bookmarks..."
+              value={formData.notes}
+              onChange={(e) =>
+                setFormData({ ...formData, notes: e.target.value })
               }
             />
           </div>
@@ -1469,7 +1526,7 @@ const ItemModal = ({
           {initialData
             ? "Update Collection"
             : isBulkMode
-              ? `Bulk Add ${Math.max(0, bulkRange.end - bulkRange.start + 1)} Volumes`
+              ? `Bulk Add ${bulkCount} Volumes`
               : "Add to Collection"}
         </button>
       </motion.div>
@@ -1990,11 +2047,11 @@ const DetailsModal = ({
     : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md overflow-hidden">
       <motion.div
-        initial={{ y: "100%" }}
-        animate={{ y: 0 }}
-        className="bg-zinc-900 sm:border border-white/10 w-full h-[95vh] sm:h-auto sm:w-11/12 sm:max-w-3xl rounded-t-[1.5rem] sm:rounded-[2rem] p-5 sm:p-8 space-y-5 sm:space-y-6 max-h-[95vh] sm:max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
+        initial={{ opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-4xl rounded-none sm:rounded-[2rem] p-4 sm:p-8 space-y-5 sm:space-y-6 overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
       >
         <div className="flex justify-between items-start">
           <div className="space-y-0.5">
@@ -2034,9 +2091,11 @@ const DetailsModal = ({
                 onEdit(item);
                 onClose();
               }}
-              className="p-2 text-zinc-500 hover:text-white transition-all"
+              className="flex items-center space-x-1.5 px-3 py-1.5 bg-white text-zinc-900 font-bold text-xs rounded-xl shadow-lg hover:bg-zinc-200 transition-all cursor-pointer"
+              title="Edit Item"
             >
-              <Pencil className="w-5 h-5" />
+              <Pencil className="w-3.5 h-3.5" />
+              <span>Edit</span>
             </button>
             <button
               onClick={() => {
@@ -2044,6 +2103,7 @@ const DetailsModal = ({
                 onClose();
               }}
               className="p-2 text-zinc-500 hover:text-red-500 transition-all"
+              title="Delete Item"
             >
               <Trash2 className="w-5 h-5" />
             </button>
@@ -2079,7 +2139,7 @@ const DetailsModal = ({
           <div className="flex-1 space-y-4">
             <div className="space-y-2">
               <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                Status
+                Read Status
               </label>
               <div className="flex flex-wrap gap-1.5">
                 {(["unread", "reading", "read"] as Status[]).map((s) => (
@@ -2112,6 +2172,20 @@ const DetailsModal = ({
           </div>
         </div>
 
+        {item.notes && (
+          <div className="glass-card p-5 rounded-2xl sm:rounded-3xl space-y-2 bg-amber-500/5 border border-amber-500/20">
+            <div className="flex items-center space-x-2 text-[var(--color-brand-orange)]">
+              <Edit3 className="w-4 h-4" />
+              <label className="text-[10px] uppercase tracking-widest font-bold">
+                Notes
+              </label>
+            </div>
+            <p className="text-zinc-200 text-xs sm:text-sm leading-relaxed whitespace-pre-line">
+              {item.notes}
+            </p>
+          </div>
+        )}
+
         {item.description && (
           <div className="glass-card p-5 rounded-3xl space-y-2">
             <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
@@ -2120,6 +2194,22 @@ const DetailsModal = ({
             <p className="text-zinc-300 text-xs leading-relaxed whitespace-pre-line max-h-40 overflow-y-auto no-scrollbar">
               {item.description}
             </p>
+          </div>
+        )}
+
+        {!item.notes && !item.description && (
+          <div className="p-4 rounded-2xl border border-dashed border-white/10 flex items-center justify-between text-zinc-500">
+            <span className="text-xs">No notes added for this item</span>
+            <button
+              onClick={() => {
+                onEdit(item);
+                onClose();
+              }}
+              className="text-xs text-[var(--color-brand-purple)] hover:text-white font-bold flex items-center gap-1 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Notes</span>
+            </button>
           </div>
         )}
 
@@ -2302,6 +2392,30 @@ const DetailsModal = ({
             </div>
           )}
         </div>
+
+        {/* Footer Action Bar */}
+        <div className="pt-4 border-t border-white/10 flex items-center justify-between gap-3">
+          <button
+            onClick={() => {
+              onDelete(item.id);
+              onClose();
+            }}
+            className="px-3.5 py-2.5 text-zinc-400 hover:text-red-400 text-xs font-semibold rounded-xl flex items-center gap-1.5 hover:bg-red-500/10 transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            <span>Delete Item</span>
+          </button>
+          <button
+            onClick={() => {
+              onEdit(item);
+              onClose();
+            }}
+            className="flex-1 max-w-xs py-2.5 bg-white text-zinc-900 font-bold text-xs rounded-xl hover:bg-zinc-200 flex items-center justify-center gap-2 shadow-lg transition-all"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            <span>Edit Item Details</span>
+          </button>
+        </div>
       </motion.div>
     </div>
   );
@@ -2433,7 +2547,7 @@ const BulkEditModal = ({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md overflow-hidden"
       onKeyDown={(e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           handleApply();
@@ -2441,9 +2555,9 @@ const BulkEditModal = ({
       }}
     >
       <motion.div
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="bg-zinc-900 sm:border border-white/10 w-full sm:w-11/12 sm:max-w-3xl rounded-t-[1.5rem] sm:rounded-[2rem] p-5 sm:p-8 space-y-5 sm:space-y-6 max-h-[95vh] sm:max-h-[90vh] overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
+        initial={{ opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl rounded-none sm:rounded-[2rem] p-4 sm:p-8 space-y-5 sm:space-y-6 overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
       >
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-serif font-bold text-white">Mass Edit</h2>
@@ -2699,12 +2813,94 @@ export default function App() {
   }, [items]);
 
   const filteredItems = useMemo(() => {
+    const rawSearch = search.trim().toLowerCase();
+
+    // Multilingual & common search terms for statuses (e.g. 'Letto', 'Da Leggere', 'In Lettura')
+    const statusTermsMap: Record<Status, string[]> = {
+      unread: [
+        "unread",
+        "to read",
+        "toread",
+        "da leggere",
+        "non letto",
+        "non letta",
+        "non letti",
+        "non lette",
+        "da iniziare",
+        "nuovo",
+        "nuovi",
+      ],
+      reading: [
+        "reading",
+        "in lettura",
+        "inlettura",
+        "leggendo",
+        "in progress",
+        "in corso",
+        "lettura",
+        "iniziato",
+        "iniziata",
+      ],
+      read: [
+        "read",
+        "finished",
+        "completed",
+        "letto",
+        "letta",
+        "letti",
+        "lette",
+        "finito",
+        "finita",
+        "finiti",
+        "finite",
+        "completato",
+        "completata",
+        "completati",
+      ],
+    };
+
+    const categoryTermsMap: Record<Category, string[]> = {
+      book: ["book", "books", "libro", "libri", "classic", "classico", "classici", "romanzo", "romanzi"],
+      manga: ["manga", "fumetto", "fumetti", "comic", "comics", "anime"],
+      gdr: ["gdr", "rpg", "gioco di ruolo", "giochi di ruolo", "role playing"],
+    };
+
     let result = items.filter((item) => {
-      const matchesSearch =
-        item.title.toLowerCase().includes(search.toLowerCase()) ||
-        item.author.toLowerCase().includes(search.toLowerCase()) ||
-        (item.seriesName &&
-          item.seriesName.toLowerCase().includes(search.toLowerCase()));
+      let matchesSearch = true;
+      if (rawSearch) {
+        const itemStatusTerms = statusTermsMap[item.status] || [];
+        const itemCatTerms = categoryTermsMap[item.category] || [];
+
+        // Full searchable corpus for this item
+        const corpus = [
+          item.title,
+          item.author,
+          item.seriesName || "",
+          item.genre || "",
+          item.notes || "",
+          item.description || "",
+          item.review || "",
+          item.isbn || "",
+          item.system || "",
+          item.status,
+          ...itemStatusTerms,
+          item.category,
+          ...itemCatTerms,
+          ...(item.tags || []),
+          item.loanedTo ? `loaned prestato ${item.loanedTo}` : "",
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        // 1. Exact phrase/substring match (e.g. "da leggere", "in lettura")
+        if (corpus.includes(rawSearch)) {
+          matchesSearch = true;
+        } else {
+          // 2. Multi-token match: all typed terms must be present in the item corpus
+          const tokens = rawSearch.split(/\s+/).filter(Boolean);
+          matchesSearch = tokens.length > 0 && tokens.every((tok) => corpus.includes(tok));
+        }
+      }
 
       let matchesFilter = true;
       if (filter !== "all") {
@@ -2765,32 +2961,174 @@ export default function App() {
       .reduce((sum, item) => sum + (item.price || 0), 0);
   }, [items, selectedIds]);
 
+  // Helper to sanitize payload and remove ghost / empty / invalid fields
+  const sanitizeLibraryItemPayload = (raw: any, isUpdate = false) => {
+    const result: Record<string, any> = {};
+
+    // Required core fields
+    if (typeof raw.title === "string" && raw.title.trim()) {
+      result.title = raw.title.trim();
+    }
+    if (typeof raw.author === "string" && raw.author.trim()) {
+      result.author = raw.author.trim();
+    }
+    if (["book", "manga", "gdr"].includes(raw.category)) {
+      result.category = raw.category;
+    } else if (!isUpdate) {
+      result.category = "book";
+    }
+    if (["unread", "reading", "read"].includes(raw.status)) {
+      result.status = raw.status;
+    } else if (!isUpdate) {
+      result.status = "unread";
+    }
+
+    // Optional string fields: only included if non-empty trimmed string
+    const optionalStrings = [
+      "genre",
+      "isbn",
+      "totalVolumes",
+      "system",
+      "coverUrl",
+      "seriesName",
+      "loanedTo",
+      "description",
+      "notes",
+      "review",
+    ];
+    for (const field of optionalStrings) {
+      if (typeof raw[field] === "string" && raw[field].trim().length > 0) {
+        result[field] = raw[field].trim();
+      }
+    }
+
+    // Optional number fields: only included if valid number
+    if (raw.price !== "" && raw.price !== null && raw.price !== undefined) {
+      const p = parseFloat(String(raw.price));
+      if (!isNaN(p) && p >= 0) result.price = p;
+    }
+
+    if (raw.totalPages !== "" && raw.totalPages !== null && raw.totalPages !== undefined) {
+      const tp = parseInt(String(raw.totalPages), 10);
+      if (!isNaN(tp) && tp > 0) result.totalPages = tp;
+    }
+
+    if (raw.pagesRead !== "" && raw.pagesRead !== null && raw.pagesRead !== undefined) {
+      const pr = parseInt(String(raw.pagesRead), 10);
+      if (!isNaN(pr) && pr >= 0) result.pagesRead = pr;
+    }
+
+    if (raw.rating !== "" && raw.rating !== null && raw.rating !== undefined) {
+      const r = parseInt(String(raw.rating), 10);
+      if (!isNaN(r) && r > 0 && r <= 5) result.rating = r;
+    }
+
+    if (raw.volumeNumber !== "" && raw.volumeNumber !== null && raw.volumeNumber !== undefined) {
+      const vn = parseInt(String(raw.volumeNumber), 10);
+      if (!isNaN(vn) && vn > 0) result.volumeNumber = vn;
+    }
+
+    // Boolean
+    if (raw.isWishlist === true) {
+      result.isWishlist = true;
+    } else if (raw.isWishlist === false) {
+      result.isWishlist = false;
+    }
+
+    // Loan Date
+    if (raw.loanDate && result.loanedTo) {
+      result.loanDate = raw.loanDate;
+    }
+
+    // Tags
+    if (Array.isArray(raw.tags) && raw.tags.length > 0) {
+      const cleanTags = raw.tags
+        .map((t: any) => String(t).trim())
+        .filter((t: string) => t.length > 0);
+      if (cleanTags.length > 0) {
+        result.tags = cleanTags;
+      }
+    }
+
+    // NEVER include id, volumeCount, userId, or createdAt in standard updates
+    delete result.id;
+    delete result.volumeCount;
+    delete result.userId;
+    delete result.createdAt;
+
+    return result;
+  };
+
+  // Safe update that gracefully handles both strict rules (requiring updatedAt)
+  // and schema-restricted rules (disallowing unknown fields or timestamps)
+  const safeUpdateDoc = async (docRef: any, data: any) => {
+    // Attempt 1: with updatedAt: serverTimestamp()
+    try {
+      await updateDoc(docRef, {
+        ...data,
+        updatedAt: serverTimestamp(),
+      });
+      return;
+    } catch (err1: any) {
+      const isPermissionErr =
+        err1?.code === "permission-denied" ||
+        err1?.message?.includes("Missing or insufficient permissions") ||
+        err1?.message?.includes("permissions");
+      if (!isPermissionErr) throw err1;
+
+      // Attempt 2: without updatedAt (in case rule rejects updatedAt)
+      try {
+        await updateDoc(docRef, data);
+        return;
+      } catch (err2: any) {
+        // Attempt 3: without volumeNumber (in case rule rejects volumeNumber)
+        const withoutVolume = { ...data };
+        delete withoutVolume.volumeNumber;
+        try {
+          await updateDoc(docRef, withoutVolume);
+          return;
+        } catch (err3: any) {
+          // Attempt 4: with explicit userId (in case rule requires incoming().userId)
+          if (user) {
+            try {
+              await updateDoc(docRef, { ...data, userId: user.uid });
+              return;
+            } catch (err4) {
+              throw err1;
+            }
+          }
+          throw err1;
+        }
+      }
+    }
+  };
+
   const handleSaveItem = async (data: any) => {
     if (!user) return;
 
-    // Clean optional fields: remove empty strings/nulls to satisfy Firestore rules
-    const cleanData = { ...data };
-    if (cleanData.price === "" || cleanData.price === null)
-      delete cleanData.price;
-    if (cleanData.totalPages === "" || cleanData.totalPages === null)
-      delete cleanData.totalPages;
-    if (cleanData.pagesRead === "" || cleanData.pagesRead === null)
-      delete cleanData.pagesRead;
-    if (cleanData.genre === "") delete cleanData.genre;
-    if (cleanData.isbn === "") delete cleanData.isbn;
-    if (cleanData.totalVolumes === "") delete cleanData.totalVolumes;
-    if (cleanData.system === "") delete cleanData.system;
-    if (cleanData.coverUrl === "") delete cleanData.coverUrl;
-    if (cleanData.seriesName === "") delete cleanData.seriesName;
-    if (cleanData.loanedTo === "") delete cleanData.loanedTo;
-    if (cleanData.loanDate === null) delete cleanData.loanDate;
-    if (cleanData.rating === 0) delete cleanData.rating;
-    if (cleanData.review === "") delete cleanData.review;
-    if (cleanData.tags && cleanData.tags.length === 0) delete cleanData.tags;
+    if (Array.isArray(data)) {
+      try {
+        const promises = data.map((item) => {
+          const clean = sanitizeLibraryItemPayload(item, false);
+          return addDoc(collection(db, "libraryItems"), {
+            ...clean,
+            userId: user.uid,
+            createdAt: serverTimestamp(),
+          });
+        });
+        await Promise.all(promises);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, "libraryItems");
+      }
+      return;
+    }
+
+    const isEditing = Boolean(editingItem);
+    const cleanData = sanitizeLibraryItemPayload(data, isEditing);
 
     try {
       if (editingItem) {
-        await updateDoc(doc(db, "libraryItems", editingItem.id), { ...cleanData, updatedAt: serverTimestamp() });
+        await safeUpdateDoc(doc(db, "libraryItems", editingItem.id), cleanData);
       } else {
         await addDoc(collection(db, "libraryItems"), {
           ...cleanData,
@@ -2809,7 +3147,7 @@ export default function App() {
 
   const handleUpdateStatus = async (id: string, status: Status) => {
     try {
-      await updateDoc(doc(db, "libraryItems", id), { status, updatedAt: serverTimestamp() });
+      await safeUpdateDoc(doc(db, "libraryItems", id), { status });
       if (selectedItemDetails?.id === id) {
         setSelectedItemDetails((prev) => (prev ? { ...prev, status } : null));
       }
@@ -2820,7 +3158,7 @@ export default function App() {
 
   const handleUpdatePages = async (id: string, pagesRead: number) => {
     try {
-      await updateDoc(doc(db, "libraryItems", id), { pagesRead, updatedAt: serverTimestamp() });
+      await safeUpdateDoc(doc(db, "libraryItems", id), { pagesRead });
       if (selectedItemDetails?.id === id) {
         setSelectedItemDetails((prev) =>
           prev ? { ...prev, pagesRead } : null,
@@ -2846,7 +3184,7 @@ export default function App() {
         updates.loanDate = deleteField();
       }
 
-      await updateDoc(doc(db, "libraryItems", id), { ...updates, updatedAt: serverTimestamp() });
+      await safeUpdateDoc(doc(db, "libraryItems", id), updates);
       if (selectedItemDetails?.id === id) {
         setSelectedItemDetails((prev) => {
           if (!prev) return null;
@@ -2893,7 +3231,7 @@ export default function App() {
   const handleBulkUpdate = async (updates: any) => {
     try {
       const promises = selectedIds.map((id) =>
-        updateDoc(doc(db, "libraryItems", id), { ...updates, updatedAt: serverTimestamp() }),
+        safeUpdateDoc(doc(db, "libraryItems", id), updates),
       );
       await Promise.all(promises);
       setSelectedIds([]);
@@ -3046,11 +3384,20 @@ export default function App() {
             <div className="flex-1 max-w-2xl relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
               <input
-                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-base sm:text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-[var(--color-brand-orange)] focus:bg-white/10 transition-all placeholder-zinc-500"
-                placeholder="Search your library..."
+                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-9 text-base sm:text-sm text-white focus:outline-none focus:border-[var(--color-brand-orange)] focus:bg-white/10 transition-all placeholder-zinc-500"
+                placeholder="Search title, author, or status ('Letto', 'Da Leggere')..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors"
+                  title="Clear search"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             {/* Actions */}
@@ -3192,10 +3539,32 @@ export default function App() {
                setEditingItem(item);
                setIsModalOpen(true);
              }}
-             
+             onOpenDetails={(item) => setSelectedItemDetails(item)}
           />
         ) : (
-          <div className="p-6 space-y-10">
+          <div className="p-6 space-y-6">
+            {/* Real-time search feedback indicator */}
+            {search && (
+              <div className="flex items-center justify-between p-3.5 bg-white/5 border border-white/10 rounded-2xl">
+                <div className="flex items-center space-x-2 text-sm text-zinc-300">
+                  <Search className="w-4 h-4 text-[var(--color-brand-orange)]" />
+                  <span>
+                    Results for <strong className="text-white">"{search}"</strong>
+                  </span>
+                  <span className="text-xs bg-white/10 text-zinc-400 px-2 py-0.5 rounded-full font-mono">
+                    {filteredItems.length} found
+                  </span>
+                </div>
+                <button
+                  onClick={() => setSearch("")}
+                  className="text-xs text-zinc-400 hover:text-white flex items-center gap-1 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Clear Search</span>
+                </button>
+              </div>
+            )}
+
             <AnimatePresence mode="popLayout">
               {groupBySeries ? (
                 <motion.div key="grouped-view" className="space-y-10">
@@ -3224,6 +3593,10 @@ export default function App() {
                                 onOpenDetails={(item) =>
                                   setSelectedItemDetails(item)
                                 }
+                                onEdit={(item) => {
+                                  setEditingItem(item);
+                                  setIsModalOpen(true);
+                                }}
                                 isSelected={selectedIds.includes(item.id)}
                                 onSelect={toggleSelection}
                                 selectionMode={isSelectionMode}
@@ -3256,6 +3629,10 @@ export default function App() {
                             onOpenDetails={(item) =>
                               setSelectedItemDetails(item)
                             }
+                            onEdit={(item) => {
+                              setEditingItem(item);
+                              setIsModalOpen(true);
+                            }}
                             isSelected={selectedIds.includes(item.id)}
                             onSelect={toggleSelection}
                             selectionMode={isSelectionMode}
@@ -3275,6 +3652,10 @@ export default function App() {
                       key={item.id}
                       item={item}
                       onOpenDetails={(item) => setSelectedItemDetails(item)}
+                      onEdit={(item) => {
+                        setEditingItem(item);
+                        setIsModalOpen(true);
+                      }}
                       isSelected={selectedIds.includes(item.id)}
                       onSelect={toggleSelection}
                       selectionMode={isSelectionMode}
@@ -3293,9 +3674,26 @@ export default function App() {
                   <div className="inline-flex p-6 rounded-full bg-white/5 text-zinc-700">
                     <Filter className="w-12 h-12" />
                   </div>
-                  <p className="text-zinc-500 font-light">
-                    No treasures found in this section.
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-zinc-400 font-medium">
+                      {search
+                        ? `No treasures found matching "${search}"`
+                        : "No treasures found in this section."}
+                    </p>
+                    {search && (
+                      <p className="text-zinc-500 text-xs">
+                        Tip: You can search by title, author, category, or read status (e.g. 'Letto', 'Da Leggere').
+                      </p>
+                    )}
+                  </div>
+                  {search && (
+                    <button
+                      onClick={() => setSearch("")}
+                      className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all"
+                    >
+                      Clear Search
+                    </button>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
