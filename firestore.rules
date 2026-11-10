@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidLibraryItem(data) {
+      return data.keys().hasAll(['userId', 'title']) &&
+        data.userId == request.auth.uid &&
+        data.title is string && data.title.size() > 0 && data.title.size() <= 300 &&
+        (!('category' in data) || data.category in ['book', 'manga', 'gdr']) &&
+        (!('status' in data) || data.status in ['unread', 'reading', 'read']) &&
+        (!('isWishlist' in data) || data.isWishlist is bool) &&
+        (!('author' in data) || (data.author is string && data.author.size() <= 300)) &&
+        (!('seriesName' in data) || (data.seriesName is string && data.seriesName.size() <= 300)) &&
+        (!('volumeNumber' in data) || (data.volumeNumber is number)) &&
+        (!('totalVolumes' in data) || ((data.totalVolumes is string && data.totalVolumes.size() <= 100) || data.totalVolumes is number)) &&
+        (!('genre' in data) || (data.genre is string && data.genre.size() <= 200)) &&
+        (!('isbn' in data) || (data.isbn is string && data.isbn.size() <= 50)) &&
+        (!('system' in data) || (data.system is string && data.system.size() <= 200)) &&
+        (!('coverUrl' in data) || (data.coverUrl is string && data.coverUrl.size() <= 5000)) &&
+        (!('loanedTo' in data) || (data.loanedTo is string && data.loanedTo.size() <= 200)) &&
+        (!('loanDate' in data) || (data.loanDate is string && data.loanDate.size() <= 100) || (data.loanDate is timestamp)) &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 10000)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 10000)) &&
+        (!('review' in data) || (data.review is string && data.review.size() <= 10000)) &&
+        (!('rating' in data) || (data.rating is number && data.rating >= 1 && data.rating <= 5)) &&
+        (!('totalPages' in data) || (data.totalPages is number && data.totalPages >= 0)) &&
+        (!('pagesRead' in data) || (data.pagesRead is number && data.pagesRead >= 0)) &&
+        (!('price' in data) || (data.price is number && data.price >= 0)) &&
+        (!('tags' in data) || (data.tags is list && data.tags.size() <= 50));
+    }
+
+    match /test/{docId} {
+      allow read: if isSignedIn();
+    }
+
+    match /libraryItems/{itemId} {
+      // Direct document reads
+      allow get: if isSignedIn() && existing().userId == request.auth.uid;
+
+      // Filtered collection queries where client filters by userId == auth.uid
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      // Item creation
+      allow create: if isSignedIn() &&
+        isValidId(itemId) &&
+        isValidLibraryItem(incoming());
+
+      // Item update: owner cannot transfer ownership, must remain valid
+      allow update: if isSignedIn() &&
+        isValidId(itemId) &&
+        (
+          (existing().userId == request.auth.uid && incoming().userId == existing().userId) ||
+          (!('userId' in existing()) && incoming().userId == request.auth.uid)
+        ) &&
+        isValidLibraryItem(incoming());
+
+      // Item deletion
+      allow delete: if isSignedIn() &&
+        isValidId(itemId) &&
+        existing().userId == request.auth.uid;
+    }
+  }
+}

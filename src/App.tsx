@@ -3400,6 +3400,29 @@ const OPTIONAL_STRING_FIELDS = [
   "review",
 ] as const;
 
+// Max string lengths enforced by firestore.rules: values are truncated
+// client-side so a single oversized field never rejects a whole batch.
+const FIELD_LIMITS: Record<string, number> = {
+  title: 300,
+  author: 300,
+  seriesName: 300,
+  totalVolumes: 100,
+  genre: 200,
+  isbn: 50,
+  system: 200,
+  coverUrl: 5000,
+  loanedTo: 200,
+  description: 10000,
+  notes: 10000,
+  review: 10000,
+};
+const clip = (field: string, value: string) => {
+  const max = FIELD_LIMITS[field];
+  if (!max || value.length <= max) return value;
+  // A truncated URL would be broken: drop it instead.
+  return field === "coverUrl" ? "" : value.slice(0, max);
+};
+
 const isBlank = (v: any) =>
   v === "" || v === null || v === undefined || (typeof v === "number" && isNaN(v));
 
@@ -3411,10 +3434,10 @@ const sanitizeLibraryItemPayload = (raw: any, isUpdate = false) => {
   const has = (k: string) => Object.prototype.hasOwnProperty.call(raw, k);
 
   if (typeof raw.title === "string" && raw.title.trim()) {
-    result.title = raw.title.trim();
+    result.title = clip("title", raw.title.trim());
   }
   if (typeof raw.author === "string" && raw.author.trim()) {
-    result.author = raw.author.trim();
+    result.author = clip("author", raw.author.trim());
   } else if (isUpdate && has("author")) {
     result.author = deleteField();
   }
@@ -3430,8 +3453,9 @@ const sanitizeLibraryItemPayload = (raw: any, isUpdate = false) => {
   }
 
   for (const field of OPTIONAL_STRING_FIELDS) {
-    if (typeof raw[field] === "string" && raw[field].trim().length > 0) {
-      result[field] = raw[field].trim();
+    const value = typeof raw[field] === "string" ? clip(field, raw[field].trim()) : "";
+    if (value.length > 0) {
+      result[field] = value;
     } else if (isUpdate && has(field) && isBlank(raw[field])) {
       result[field] = deleteField();
     }
@@ -3473,7 +3497,7 @@ const sanitizeLibraryItemPayload = (raw: any, isUpdate = false) => {
         raw.tags.map((t: any) => String(t).trim()).filter((t: string) => t.length > 0),
       ),
     );
-    if (cleanTags.length > 0) result.tags = cleanTags;
+    if (cleanTags.length > 0) result.tags = cleanTags.slice(0, 50);
     else if (isUpdate && has("tags")) result.tags = deleteField();
   }
 
@@ -3484,40 +3508,15 @@ const sanitizeLibraryItemPayload = (raw: any, isUpdate = false) => {
   return result;
 };
 
-// Gracefully handles both strict rules (requiring updatedAt) and
-// schema-restricted rules (disallowing unknown fields or timestamps).
+// Single write that satisfies firestore.rules: `userId` is always re-sent so
+// legacy documents created without it can be updated too (the update rule
+// accepts a missing existing userId only if the incoming one is the caller's).
 const safeUpdateDoc = async (docRef: any, data: any, uid?: string) => {
-  try {
-    await updateDoc(docRef, { ...data, updatedAt: serverTimestamp() });
-    return;
-  } catch (err1: any) {
-    const isPermissionErr =
-      err1?.code === "permission-denied" ||
-      err1?.message?.includes("permissions");
-    if (!isPermissionErr) throw err1;
-
-    try {
-      await updateDoc(docRef, data);
-      return;
-    } catch {
-      const withoutVolume = { ...data };
-      delete withoutVolume.volumeNumber;
-      try {
-        await updateDoc(docRef, withoutVolume);
-        return;
-      } catch {
-        if (uid) {
-          try {
-            await updateDoc(docRef, { ...data, userId: uid });
-            return;
-          } catch {
-            throw err1;
-          }
-        }
-        throw err1;
-      }
-    }
-  }
+  await updateDoc(docRef, {
+    ...data,
+    ...(uid ? { userId: uid } : {}),
+    updatedAt: serverTimestamp(),
+  });
 };
 
 const STATUS_ORDER: Record<Status, number> = { reading: 0, unread: 1, read: 2 };
