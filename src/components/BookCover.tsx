@@ -253,7 +253,7 @@ export const BookCover: React.FC<BookCoverProps> = ({
         )}
 
         {volumeNumber && (
-          <div className="text-[9px] sm:text-[10px] font-mono font-bold px-1.5 sm:px-2 py-0.5 rounded bg-black/60 border border-white/10 text-white shadow-sm">
+          <div className="ml-auto text-[9px] sm:text-[10px] font-mono font-bold px-1.5 sm:px-2 py-0.5 rounded bg-black/60 border border-white/10 text-white shadow-sm">
             #{volumeNumber}
           </div>
         )}
@@ -266,7 +266,7 @@ export const BookCover: React.FC<BookCoverProps> = ({
           <Icon className={cn("w-3.5 h-3.5 sm:w-5 sm:h-5", config.accent)} />
         </div>
 
-        <h3
+        <p
           className={cn(
             "text-[11px] sm:text-sm md:text-base font-bold leading-tight sm:leading-snug line-clamp-3 sm:line-clamp-4 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] px-1",
             config.fontClass,
@@ -275,7 +275,7 @@ export const BookCover: React.FC<BookCoverProps> = ({
           title={title}
         >
           {title}
-        </h3>
+        </p>
 
         {/* Author / System */}
         {(author || system) && (
