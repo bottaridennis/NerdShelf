@@ -57,6 +57,8 @@ import {
   User as UserIcon,
   ShoppingBag,
   Check,
+  BookOpen,
+  List as ListIcon,
   AlertTriangle,
   LayoutGrid,
   BarChart3,
@@ -400,7 +402,7 @@ const ISBNScanner = ({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl">
-      <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-6 sm:p-8 space-y-6 shadow-2xl">
+      <div className="modal-panel border w-full max-w-md rounded-[2.5rem] p-6 sm:p-8 space-y-6 shadow-2xl">
         <div className="flex justify-between items-center">
           <div className="space-y-1">
             <h3 className="text-xl font-serif font-bold text-white">
@@ -429,7 +431,7 @@ const ISBNScanner = ({
               </div>
               <button
                 onClick={startScanner}
-                className="px-6 py-2.5 bg-white text-zinc-900 text-xs font-bold uppercase tracking-widest rounded-full hover:bg-white/10 transition-all"
+                className="px-6 py-2.5 btn-primary text-xs uppercase tracking-widest rounded-full"
               >
                 Avvia fotocamera
               </button>
@@ -510,7 +512,6 @@ const AuthScreen = () => {
       <div className="absolute inset-0 pointer-events-none z-[0] overflow-hidden">
         <div className="absolute top-[-20%] left-[-10%] w-[70vw] h-[70vw] bg-purple-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50 animate-pulse-slow"></div>
         <div className="absolute bottom-[-20%] right-[-10%] w-[70vw] h-[70vw] bg-red-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50 animate-pulse-slow delay-1000"></div>
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] mix-blend-overlay"></div>
       </div>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -634,8 +635,35 @@ const StarRating = ({
   );
 };
 
+const CATEGORY_DOT: Record<Category, { label: string; dot: string; text: string; bar: string }> = {
+  book: { label: "Libro", dot: "bg-amber-500", text: "text-amber-400", bar: "bg-amber-500" },
+  manga: { label: "Manga", dot: "bg-purple-500", text: "text-purple-400", bar: "bg-purple-500" },
+  gdr: { label: "GDR", dot: "bg-red-500", text: "text-red-400", bar: "bg-red-500" },
+};
+
+const STATUS_BADGE: Record<Status, { label: string; className: string; icon: typeof Book }> = {
+  unread: { label: "Da leggere", className: "bg-zinc-900/80 text-zinc-300 border-white/10", icon: Book },
+  reading: { label: "In lettura", className: "bg-sky-500/90 text-white border-sky-300/40", icon: BookOpen },
+  read: { label: "Finito", className: "bg-emerald-500/90 text-white border-emerald-300/40", icon: CheckCircle2 },
+};
+
+const MiniStars = ({ rating }: { rating: number }) => (
+  <span className="flex items-center gap-0.5" aria-label={`Voto ${rating} su 5`}>
+    {[1, 2, 3, 4, 5].map((s) => (
+      <Sparkles
+        key={s}
+        aria-hidden
+        className={cn("w-2.5 h-2.5", s <= rating ? "fill-amber-400 text-amber-400" : "text-white/15")}
+      />
+    ))}
+  </span>
+);
+
+type CardLayout = "grid" | "list";
+
 const ItemCard = ({
   item,
+  layout = "grid",
   onOpenDetails,
   onEdit,
   onMarkAsBought,
@@ -644,6 +672,7 @@ const ItemCard = ({
   selectionMode,
 }: {
   item: LibraryItem;
+  layout?: CardLayout;
   onOpenDetails: (item: LibraryItem) => void;
   onEdit?: (item: LibraryItem) => void;
   onMarkAsBought?: (item: LibraryItem) => void;
@@ -652,74 +681,180 @@ const ItemCard = ({
   onSelect?: (id: string) => void;
   selectionMode?: boolean;
 }) => {
-  const categoryConfig = {
-    book: {
-      icon: Book,
-      color: "text-amber-600",
-      progressColor: "bg-amber-600 shadow-[0_0_8px_rgba(217,119,6,0.8)]",
-      border: "category-book",
-      label: "Libro",
-    },
-    manga: {
-      icon: Sparkles,
-      color: "text-purple-600",
-      progressColor: "bg-purple-600 shadow-[0_0_8px_rgba(147,51,234,0.8)]",
-      border: "category-manga",
-      label: "Manga",
-    },
-    gdr: {
-      icon: Sword,
-      color: "text-red-700",
-      progressColor: "bg-red-700 shadow-[0_0_8px_rgba(185,28,28,0.8)]",
-      border: "category-gdr",
-      label: "GDR",
-    },
-  };
-
-  const statusBadgeConfig: Record<Status, { label: string; color: string }> = {
-    unread: { label: "Da leggere", color: "text-zinc-400 bg-white/5 border-white/10" },
-    reading: { label: "In lettura", color: "text-blue-400 bg-blue-500/10 border-blue-500/20" },
-    read: { label: "Finito", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
-  };
-
-  const config = categoryConfig[item.category] || categoryConfig.book;
+  const cat = CATEGORY_DOT[item.category] || CATEGORY_DOT.book;
+  const status = STATUS_BADGE[item.status] || STATUS_BADGE.unread;
+  const StatusIcon = status.icon;
   const volume = getVolume(item);
-  const statusBadge = statusBadgeConfig[item.status] || statusBadgeConfig.unread;
+  const total = Number(item.totalPages) || 0;
+  const progress = total ? Math.min(100, ((Number(item.pagesRead) || 0) / total) * 100) : 0;
+  const subtitle = [
+    item.author,
+    item.category === "gdr" ? item.system : undefined,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
-  return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, scale: 0.9 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      whileHover={{ y: -5 }}
-      role="button"
-      tabIndex={0}
-      aria-pressed={selectionMode ? !!isSelected : undefined}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          if (selectionMode) onSelect?.(item.id);
-          else onOpenDetails(item);
-        }
-      }}
-      onClick={() => {
-        if (selectionMode) {
-          onSelect?.(item.id);
-        } else {
-          onOpenDetails(item);
-        }
-      }}
+  const activate = () => (selectionMode ? onSelect?.(item.id) : onOpenDetails(item));
+  const a11y = {
+    role: "button" as const,
+    tabIndex: 0,
+    "aria-pressed": selectionMode ? !!isSelected : undefined,
+    "aria-label": `${item.title}${volume !== undefined ? `, volume ${volume}` : ""}${item.author ? `, di ${item.author}` : ""}, ${status.label}`,
+    onClick: activate,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        activate();
+      }
+    },
+  };
+
+  const selectionBadge = selectionMode && (
+    <span
+      aria-hidden
       className={cn(
-        "glass-card p-4 rounded-2xl flex flex-row sm:flex-col items-center sm:items-stretch space-x-4 sm:space-x-0 sm:space-y-4 group relative overflow-hidden cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand-orange)]",
-        config.border,
-        isSelected && "ring-2 ring-[var(--color-brand-orange)] border-transparent bg-white/10",
+        "absolute top-2 left-2 z-30 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors",
+        isSelected
+          ? "bg-[var(--color-brand-orange)] border-[var(--color-brand-orange)] text-white"
+          : "bg-black/50 border-white/80 text-transparent",
       )}
     >
+      <Check className="w-3.5 h-3.5" strokeWidth={3} />
+    </span>
+  );
+
+  const buyButton = item.isWishlist && onMarkAsBought && !selectionMode && (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onMarkAsBought(item);
+      }}
+      className="btn-success w-full py-2 px-3 text-xs rounded-xl flex items-center justify-center gap-1.5"
+      title="Segna come comprato e sposta nella libreria"
+    >
+      <ShoppingBag className="w-3.5 h-3.5" />
+      <span>Comprato</span>
+    </button>
+  );
+
+  if (layout === "list") {
+    return (
       <div
-        className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] flex-shrink-0 bg-black/40 rounded-xl overflow-hidden relative shadow-2xl border border-white/10 group-hover:border-white/20 transition-all text-left"
+        {...a11y}
+        className={cn(
+          "card-interactive group relative flex items-center gap-3 sm:gap-4 p-2.5 sm:p-3 rounded-2xl",
+          isSelected && "is-selected",
+        )}
       >
+        <div className="relative w-12 h-[4.5rem] sm:w-14 sm:h-[5.25rem] shrink-0 rounded-lg overflow-hidden border border-white/10 bg-black/40">
+          <BookCover
+            title={item.title}
+            author={item.author}
+            category={item.category}
+            volumeNumber={volume}
+            coverUrl={item.coverUrl}
+            size="sm"
+          />
+          {selectionMode && (
+            <span
+              aria-hidden
+              className={cn(
+                "absolute inset-0 z-30 flex items-center justify-center",
+                isSelected ? "bg-[var(--color-brand-orange)]/40" : "bg-black/30",
+              )}
+            >
+              <Check className={cn("w-5 h-5", isSelected ? "text-white" : "text-white/40")} strokeWidth={3} />
+            </span>
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <h3 className="text-sm font-semibold text-white truncate">{item.title}</h3>
+            {volume !== undefined && (
+              <span className="text-[11px] font-mono text-zinc-500 shrink-0">#{volume}</span>
+            )}
+          </div>
+          <p className="text-xs text-zinc-500 truncate flex items-center gap-1.5">
+            <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cat.dot)} aria-hidden />
+            {subtitle || cat.label}
+            {item.seriesName && item.seriesName !== item.title && (
+              <span className="text-zinc-600 truncate">· {item.seriesName}</span>
+            )}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={cn("inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border", status.className)}>
+              <StatusIcon className="w-3 h-3" aria-hidden />
+              {status.label}
+            </span>
+            {item.loanedTo && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-300">
+                <Handshake className="w-3 h-3" aria-hidden />
+                {item.loanedTo}
+              </span>
+            )}
+            {item.rating ? <MiniStars rating={item.rating} /> : null}
+          </div>
+          {total > 0 && item.status !== "unread" && (
+            <div className="h-1 rounded-full bg-white/5 overflow-hidden max-w-xs">
+              <div className={cn("h-full rounded-full", cat.bar)} style={{ width: `${progress}%` }} />
+            </div>
+          )}
+        </div>
+
+        <div className="hidden sm:flex flex-col items-end gap-1 shrink-0 text-right">
+          {item.price !== undefined && item.price !== null && (
+            <span className="text-xs font-mono text-zinc-400">{formatPrice(item.price)}</span>
+          )}
+          {total > 0 && (
+            <span className="text-[10px] font-mono text-zinc-600">
+              {item.pagesRead || 0}/{total} pp.
+            </span>
+          )}
+        </div>
+
+        {item.isWishlist && onMarkAsBought && !selectionMode ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMarkAsBought(item);
+            }}
+            className="btn-success p-2 rounded-xl shrink-0"
+            title="Segna come comprato"
+            aria-label={`Segna ${item.title} come comprato`}
+          >
+            <ShoppingBag className="w-4 h-4" />
+          </button>
+        ) : (
+          onEdit &&
+          !selectionMode && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(item);
+              }}
+              className="p-2 rounded-xl text-zinc-500 hover:text-white hover:bg-white/10 transition-colors shrink-0 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+              title="Modifica"
+              aria-label={`Modifica ${item.title}`}
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      {...a11y}
+      className={cn("card-interactive group relative flex flex-col rounded-2xl p-2 sm:p-2.5", isSelected && "is-selected")}
+    >
+      <div className="relative aspect-[2/3] rounded-xl overflow-hidden bg-black/40 border border-white/[0.06] shadow-[0_10px_30px_-12px_rgba(0,0,0,0.9)]">
         <BookCover
           title={item.title}
           author={item.author}
@@ -727,193 +862,91 @@ const ItemCard = ({
           system={item.system}
           volumeNumber={volume}
           coverUrl={item.coverUrl}
+          showCategoryBadge={false}
         />
+
+        {selectionBadge}
+
+        {/* Top-left: status / wishlist (category is shown as a dot below) */}
+        {!selectionMode && (
+        <div className="absolute top-2 left-2 z-30 flex flex-col items-start gap-1">
+          {item.isWishlist ? (
+            <span className="bg-rose-500/90 text-white p-1 rounded-full shadow-lg" title="In wishlist">
+              <Heart className="w-3 h-3 fill-white" aria-hidden />
+            </span>
+          ) : item.status !== "unread" ? (
+            <span
+              className={cn("p-1 rounded-full shadow-lg border", status.className)}
+              title={status.label}
+            >
+              <StatusIcon className="w-3 h-3" aria-hidden />
+            </span>
+          ) : null}
+        </div>
+        )}
+
+        {/* Volume badge only over real cover images (fallback covers already show it) */}
+        {volume !== undefined && item.coverUrl && (
+          <span className="absolute bottom-2 right-2 z-30 min-w-6 h-6 px-1.5 rounded-full bg-black/75 border border-white/20 text-white text-[11px] font-bold flex items-center justify-center backdrop-blur-sm">
+            {volume}
+          </span>
+        )}
+
         {item.loanedTo && (
-          <div
-            className="absolute bottom-2 left-2 bg-amber-500 text-white text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded shadow-lg z-30 flex items-center gap-1 max-w-[70%]"
+          <span
+            className="absolute bottom-2 left-2 z-30 max-w-[75%] flex items-center gap-1 bg-amber-500 text-zinc-950 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md shadow-lg"
             title={`In prestito a ${item.loanedTo}`}
           >
-            <Handshake className="w-2.5 h-2.5 shrink-0" />
+            <Handshake className="w-2.5 h-2.5 shrink-0" aria-hidden />
             <span className="truncate">{item.loanedTo}</span>
-          </div>
+          </span>
         )}
-        {item.isWishlist && (
-          <div className="absolute top-2 right-2 bg-rose-500/90 text-white p-1 rounded-full shadow-lg z-30">
-            <Heart className="w-3 h-3 fill-white" />
-          </div>
-        )}
-        {volume !== undefined && item.coverUrl && (
-          <div className="absolute bottom-2 right-2 bg-zinc-900/90 border border-white/20 text-white min-w-7 h-7 px-1 rounded-full shadow-lg flex items-center justify-center backdrop-blur-sm z-30">
-            <span className="font-bold text-[11px] leading-none">{volume}</span>
-          </div>
-        )}
-        {selectionMode && (
-          <div
-            className={cn(
-              "absolute inset-0 flex items-center justify-center transition-all z-30",
-              isSelected
-                ? "bg-white/20"
-                : "bg-white/5 opacity-0 group-hover:opacity-100",
-            )}
-          >
-            <div
-              className={cn(
-                "w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all",
-                isSelected
-                  ? "bg-[var(--color-brand-orange)] border-[var(--color-brand-orange)] text-white"
-                  : "border-white text-transparent",
-              )}
-            >
-              <CheckCircle2 className="w-5 h-5" />
-            </div>
+
+        {/* Reading progress along the bottom edge of the cover */}
+        {item.status === "reading" && total > 0 && (
+          <div className="absolute inset-x-0 bottom-0 z-20 h-1 bg-black/60" aria-hidden>
+            <div className="h-full bg-sky-400" style={{ width: `${progress}%` }} />
           </div>
         )}
       </div>
 
-      <div className="flex-1 min-w-0 flex flex-col justify-between h-full sm:min-h-[100px]">
-        <div className="flex justify-between items-start gap-2">
-          <div className="min-w-0">
-            <h3 className="text-base font-medium text-white leading-tight line-clamp-2 sm:h-10">
-              {item.title}
-            </h3>
-            {/* Mobile Author */}
-            <p className="text-xs text-zinc-500 truncate sm:hidden mt-1">
-              {item.author}
-            </p>
-          </div>
-          {/* Mobile Volume Badge */}
-          <div className="sm:hidden">
-            {volume !== undefined && (
-              <span className="text-[9px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30 shrink-0">
-                Vol. {volume}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Desktop Footer / Bottom Row */}
-        <div className="flex flex-col mt-auto pt-2">
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-zinc-500 truncate flex-1 mr-2 hidden sm:block">
-              {item.author}
-            </p>
-
-            <div className="hidden sm:flex items-center space-x-2">
-              <span
-                className={cn(
-                  "text-[9px] uppercase tracking-widest font-bold",
-                  config.color,
-                )}
-              >
-                {config.label}
-              </span>
-              {volume !== undefined && (
-                <span className="text-[9px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30 shrink-0">
-                  Vol. {volume}
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between mt-1">
-            {item.rating ? (
-              <div className="flex items-center space-x-0.5">
-                {[1, 2, 3, 4, 5].map((star) => (
-                  <Sparkles
-                    key={star}
-                    className={cn(
-                      "w-3 h-3",
-                      star <= item.rating!
-                        ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]"
-                        : "text-white/10",
-                    )}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div />
-            )}
-            {item.tags && item.tags.length > 0 && (
-              <div className="hidden sm:flex items-center space-x-1 shrink-0 ml-2">
-                <span className="bg-white/5 border border-white/10 text-zinc-400 text-[8px] px-1.5 py-0.5 rounded uppercase tracking-widest truncate max-w-[60px]">
-                  {item.tags[0]}
-                </span>
-                {item.tags.length > 1 && (
-                  <span className="text-zinc-600 text-[8px]">
-                    +{item.tags.length - 1}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-white/5">
-            <span
-              className={cn(
-                "text-[8px] sm:text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded border",
-                statusBadge.color,
-              )}
+      <div className="flex-1 flex flex-col pt-2.5 px-0.5 min-w-0">
+        <h3 className="text-[13px] sm:text-sm font-semibold text-white leading-snug line-clamp-2 min-h-[2.5em]">
+          {item.title}
+        </h3>
+        <p className="text-[11px] sm:text-xs text-zinc-500 truncate mt-0.5 flex items-center gap-1.5">
+          <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", cat.dot)} aria-hidden />
+          <span className="truncate">{subtitle || cat.label}</span>
+        </p>
+        <div className="flex items-center justify-between gap-2 mt-1.5 min-h-[18px]">
+          {item.rating ? (
+            <MiniStars rating={item.rating} />
+          ) : item.status === "reading" && total > 0 ? (
+            <span className="text-[10px] font-mono text-sky-400">{Math.round(progress)}%</span>
+          ) : (
+            <span />
+          )}
+          {onEdit && !selectionMode && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(item);
+              }}
+              className="p-1 -m-1 rounded-lg text-zinc-500 hover:text-white hover:bg-white/10 transition-colors sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100"
+              title="Modifica"
+              aria-label={`Modifica ${item.title}`}
             >
-              {statusBadge.label}
-            </span>
-
-            {onEdit && !selectionMode && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit(item);
-                }}
-                className="p-1 rounded-lg text-zinc-500 hover:text-white hover:bg-white/10 transition-colors opacity-80 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-                title="Modifica"
-                aria-label={`Modifica ${item.title}`}
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
-
-        {item.totalPages && item.totalPages > 0 ? (
-          <div className="mt-3 space-y-1">
-            <div className="flex justify-between items-center text-[10px] uppercase font-bold tracking-widest px-0.5">
-              <span className="text-zinc-600">Progresso</span>
-              <span className="text-zinc-400">
-                {Math.round(((item.pagesRead || 0) / item.totalPages) * 100)}%
-              </span>
-            </div>
-            <div className="w-full bg-black/40 h-1.5 rounded-full overflow-hidden border border-white/5">
-              <div
-                className={cn(
-                  "h-full transition-all duration-700 ease-out",
-                  config.progressColor,
-                )}
-                style={{
-                  width: `${Math.min(100, ((item.pagesRead || 0) / item.totalPages) * 100)}%`,
-                }}
-              />
-            </div>
-          </div>
-        ) : null}
-
-        {item.isWishlist && onMarkAsBought && !selectionMode && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onMarkAsBought(item);
-            }}
-            className="w-full mt-3 py-2 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-950/40 flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer group/buy"
-            title="Segna come comprato e sposta nella libreria"
-          >
-            <ShoppingBag className="w-3.5 h-3.5 group-hover/buy:scale-110 transition-transform" />
-            <span>Segna come comprato</span>
-          </button>
-        )}
+        {buyButton && <div className="mt-2">{buyButton}</div>}
       </div>
-    </motion.div>
+    </div>
   );
 };
+
 
 const inputClass =
   "w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-sm text-white focus:outline-none focus:border-white/30 focus:bg-white/[0.07] placeholder:text-zinc-500 transition-colors";
@@ -1280,7 +1313,7 @@ const ItemModal = ({
         aria-labelledby="item-modal-title"
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl rounded-none sm:rounded-[2rem] shadow-2xl flex flex-col overflow-hidden"
+        className="modal-panel border-0 sm:border w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl rounded-none sm:rounded-[2rem] shadow-2xl flex flex-col overflow-hidden"
       >
         {/* Header */}
         <div className="flex justify-between items-center px-4 sm:px-8 pt-4 sm:pt-6 pb-3 border-b border-white/5">
@@ -1922,7 +1955,7 @@ const ItemModal = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 sm:px-8 py-4 border-t border-white/5 bg-zinc-900 flex gap-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <div className="px-4 sm:px-8 py-4 border-t border-white/[0.06] flex gap-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button
             type="button"
             onClick={onClose}
@@ -1934,7 +1967,7 @@ const ItemModal = ({
             type="button"
             disabled={!formData.title.trim()}
             onClick={handleSave}
-            className="flex-1 py-3.5 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-zinc-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex-1 py-3.5 btn-primary rounded-2xl"
           >
             {isEditing
               ? "Salva modifiche"
@@ -2587,7 +2620,7 @@ const DetailsModal = ({
         aria-labelledby="details-title"
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl rounded-none sm:rounded-[2rem] shadow-2xl flex flex-col overflow-hidden"
+        className="modal-panel border-0 sm:border w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl rounded-none sm:rounded-[2rem] shadow-2xl flex flex-col overflow-hidden"
       >
         {/* Header */}
         <div className="flex items-center justify-between gap-3 px-4 sm:px-8 pt-4 sm:pt-6 pb-3 border-b border-white/5">
@@ -2720,7 +2753,7 @@ const DetailsModal = ({
               {onMarkAsBought && (
                 <button
                   onClick={() => onMarkAsBought(item)}
-                  className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-center gap-1.5 transition-all active:scale-95 shrink-0"
+                  className="px-4 py-2 btn-success text-xs rounded-xl shadow-lg flex items-center justify-center gap-1.5 transition-all active:scale-95 shrink-0"
                 >
                   <ShoppingBag className="w-4 h-4" />
                   <span>Segna come comprato</span>
@@ -2946,7 +2979,7 @@ const DetailsModal = ({
                   <button
                     type="submit"
                     disabled={!loanDraft.trim()}
-                    className="px-4 bg-white text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-xl hover:bg-zinc-200 disabled:opacity-40"
+                    className="px-4 btn-primary text-[10px] uppercase tracking-widest rounded-xl"
                   >
                     Presta
                   </button>
@@ -2957,7 +2990,7 @@ const DetailsModal = ({
         </div>
 
         {/* Footer */}
-        <div className="px-4 sm:px-8 py-4 border-t border-white/5 bg-zinc-900 flex items-center justify-between gap-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <div className="px-4 sm:px-8 py-4 border-t border-white/[0.06] flex items-center justify-between gap-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button
             onClick={() => onDelete(item.id)}
             className="px-3.5 py-2.5 text-zinc-400 hover:text-red-400 text-xs font-semibold rounded-xl flex items-center gap-1.5 hover:bg-red-500/10 transition-colors"
@@ -2967,7 +3000,7 @@ const DetailsModal = ({
           </button>
           <button
             onClick={() => onEdit(item)}
-            className="py-2.5 px-5 bg-white text-zinc-900 font-bold text-xs rounded-xl hover:bg-zinc-200 flex items-center justify-center gap-2 shadow-lg transition-all"
+            className="py-2.5 px-5 btn-primary text-xs rounded-xl flex items-center justify-center gap-2"
           >
             <Pencil className="w-3.5 h-3.5" />
             <span>Modifica</span>
@@ -3007,7 +3040,7 @@ const DeleteConfirmationModal = ({
         aria-modal="true"
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-zinc-900 border border-white/10 p-6 rounded-3xl max-w-sm w-full space-y-6 shadow-2xl"
+        className="modal-panel border p-6 rounded-3xl max-w-sm w-full space-y-6 shadow-2xl"
       >
         <div className="space-y-3 text-center">
           <div className="w-12 h-12 mx-auto rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
@@ -3096,7 +3129,7 @@ const BulkToolbar = ({
         <button
           onClick={onMarkAsBought}
           disabled={count === 0}
-          className="p-2.5 sm:px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95"
+          className="p-2.5 sm:px-3 btn-success disabled:opacity-40 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95"
           title="Segna selezionati come comprati"
         >
           <ShoppingBag className="w-4 h-4" />
@@ -3199,7 +3232,7 @@ const BulkEditModal = ({
         aria-modal="true"
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-xl rounded-none sm:rounded-[2rem] p-4 sm:p-8 space-y-5 overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
+        className="modal-panel border-0 sm:border w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-xl rounded-none sm:rounded-[2rem] p-4 sm:p-8 space-y-5 overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
       >
         <div className="flex justify-between items-start">
           <div>
@@ -3318,7 +3351,7 @@ const BulkEditModal = ({
         <button
           onClick={handleApply}
           disabled={!hasChanges}
-          className="w-full py-4 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-zinc-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          className="w-full py-4 btn-primary rounded-2xl"
         >
           Applica a {count} {count === 1 ? "elemento" : "elementi"}
         </button>
@@ -3352,7 +3385,7 @@ const AlertConfirmModal = ({
         aria-modal="true"
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-[2rem] p-8 space-y-6 shadow-2xl text-center"
+        className="modal-panel border w-full max-w-sm rounded-[2rem] p-8 space-y-6 shadow-2xl text-center"
       >
         <div className="space-y-3">
           <h2 className="text-xl font-serif font-bold text-white">{title}</h2>
@@ -3374,7 +3407,7 @@ const AlertConfirmModal = ({
               onClose();
               if (onConfirm) onConfirm();
             }}
-            className="flex-1 py-3.5 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-zinc-200 transition-all active:scale-95 shadow-lg"
+            className="flex-1 py-3.5 btn-primary rounded-2xl"
           >
             {showCancel ? "Conferma" : "OK"}
           </button>
@@ -3580,10 +3613,10 @@ const writeStorage = (key: string, value: string) => {
 };
 
 const SkeletonGrid = () => (
-  <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6" aria-busy="true" aria-label="Caricamento libreria">
-    {Array.from({ length: 10 }).map((_, i) => (
-      <div key={i} className="glass-card p-4 rounded-2xl flex sm:flex-col gap-4 animate-pulse">
-        <div className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] rounded-xl bg-white/5" />
+  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-5" aria-busy="true" aria-label="Caricamento libreria">
+    {Array.from({ length: 12 }).map((_, i) => (
+      <div key={i} className="surface-card p-2.5 rounded-2xl flex flex-col gap-3 animate-pulse">
+        <div className="w-full aspect-[2/3] rounded-xl bg-white/5" />
         <div className="flex-1 space-y-2">
           <div className="h-3 rounded bg-white/10 w-3/4" />
           <div className="h-2.5 rounded bg-white/5 w-1/2" />
@@ -3616,6 +3649,9 @@ export default function App() {
   );
   const [groupBySeries, setGroupBySeries] = useState(
     () => readStorage("nerdshelf_group", "0") === "1",
+  );
+  const [cardLayout, setCardLayout] = useState<CardLayout>(
+    () => (readStorage("nerdshelf_layout", "grid") === "list" ? "list" : "grid"),
   );
   const [collapsedSeries, setCollapsedSeries] = useState<Record<string, boolean>>({});
 
@@ -3671,6 +3707,7 @@ export default function App() {
   useEffect(() => writeStorage("nerdshelf_sort", sortBy), [sortBy]);
   useEffect(() => writeStorage("nerdshelf_view", view), [view]);
   useEffect(() => writeStorage("nerdshelf_group", groupBySeries ? "1" : "0"), [groupBySeries]);
+  useEffect(() => writeStorage("nerdshelf_layout", cardLayout), [cardLayout]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -4274,6 +4311,7 @@ export default function App() {
     <ItemCard
       key={item.id}
       item={item}
+      layout={cardLayout}
       onOpenDetails={(it) => setDetailsId(it.id)}
       onEdit={openEditItem}
       onMarkAsBought={handleMarkAsBought}
@@ -4283,7 +4321,10 @@ export default function App() {
     />
   );
 
-  const gridClass = "grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6";
+  const gridClass =
+    cardLayout === "list"
+      ? "grid grid-cols-1 lg:grid-cols-2 gap-2 sm:gap-3"
+      : "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-5";
 
   const viewTabs: { id: ViewMode; label: string; icon: typeof Book }[] = [
     { id: "library", label: "Griglia", icon: LayoutGrid },
@@ -4340,32 +4381,56 @@ export default function App() {
           />
         ))}
       </div>
-      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
-        {statusOptions.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setStatusFilter(s.id)}
-            aria-pressed={statusFilter === s.id}
-            className={cn(
-              "px-3 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all",
-              statusFilter === s.id
-                ? "bg-white/15 text-white"
-                : "text-zinc-500 hover:text-zinc-200 hover:bg-white/5",
-            )}
-          >
-            {s.label}
-          </button>
-        ))}
-        <span className="ml-auto text-[11px] text-zinc-500 whitespace-nowrap pl-2">
+      <div className="flex items-center gap-2">
+        <div className="flex-1 min-w-0 flex items-center gap-1 overflow-x-auto no-scrollbar -ml-4 pl-4 sm:ml-0 sm:pl-0">
+          {statusOptions.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setStatusFilter(s.id)}
+              aria-pressed={statusFilter === s.id}
+              className={cn(
+                "px-3 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all",
+                statusFilter === s.id
+                  ? "bg-white/15 text-white"
+                  : "text-zinc-500 hover:text-zinc-200 hover:bg-white/5",
+              )}
+            >
+              {s.label}
+            </button>
+          ))}
+          {activeFilterCount > 0 && (
+            <button
+              onClick={resetFilters}
+              className="px-2 text-[11px] font-semibold text-[var(--color-brand-orange)] hover:underline whitespace-nowrap"
+            >
+              Azzera filtri
+            </button>
+          )}
+        </div>
+        <span className="hidden sm:inline text-[11px] text-zinc-500 whitespace-nowrap">
           {filteredItems.length} {filteredItems.length === 1 ? "elemento" : "elementi"}
         </span>
-        {activeFilterCount > 0 && (
-          <button
-            onClick={resetFilters}
-            className="text-[11px] font-semibold text-[var(--color-brand-orange)] hover:underline whitespace-nowrap"
-          >
-            Azzera filtri
-          </button>
+        {view !== "shelf" && (
+          <div className="flex items-center p-0.5 rounded-lg bg-white/5 border border-white/10 shrink-0" role="group" aria-label="Layout">
+            {([
+              { id: "grid", icon: LayoutGrid, label: "Copertine" },
+              { id: "list", icon: ListIcon, label: "Elenco" },
+            ] as const).map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => setCardLayout(opt.id)}
+                aria-pressed={cardLayout === opt.id}
+                title={opt.label}
+                aria-label={opt.label}
+                className={cn(
+                  "p-1.5 rounded-md transition-colors",
+                  cardLayout === opt.id ? "bg-white/15 text-white" : "text-zinc-500 hover:text-white",
+                )}
+              >
+                <opt.icon className="w-3.5 h-3.5" />
+              </button>
+            ))}
+          </div>
         )}
       </div>
     </div>
@@ -4400,7 +4465,7 @@ export default function App() {
           onClick={() => openNewItem()}
           className={cn(
             "px-5 py-3 font-bold rounded-xl inline-flex items-center justify-center gap-2 transition-all active:scale-95",
-            view === "wishlist" ? "bg-rose-600 hover:bg-rose-500 text-white" : "bg-white hover:bg-zinc-200 text-zinc-900",
+            view === "wishlist" ? "bg-rose-600 hover:bg-rose-500 text-white" : "btn-primary",
           )}
         >
           <Plus className="w-4 h-4" />
@@ -4446,13 +4511,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen pb-28 sm:pb-24 relative overflow-x-hidden">
-      {/* Background */}
-      <div className="fixed inset-0 pointer-events-none z-[-1] overflow-hidden">
-        <div className="absolute top-[-20%] left-[-10%] w-[50vw] h-[50vw] bg-purple-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50"></div>
-        <div className="absolute bottom-[-20%] right-[-10%] w-[50vw] h-[50vw] bg-red-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50"></div>
-        <div className="absolute top-[40%] left-[60%] w-[30vw] h-[30vw] bg-blue-900/10 rounded-full blur-[100px] mix-blend-screen opacity-30"></div>
-      </div>
-
       {/* Click-outside layer for dropdowns */}
       {(isFilterMenuOpen || isProfileMenuOpen) && (
         <div
@@ -4465,7 +4523,7 @@ export default function App() {
       )}
 
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 w-full bg-[#0b0b0d]/80 backdrop-blur-xl border-b border-white/10 shadow-lg pt-[env(safe-area-inset-top)]">
+      <header className="fixed top-0 left-0 right-0 z-50 w-full bg-[#0a090d]/75 backdrop-blur-xl border-b border-white/[0.06] pt-[env(safe-area-inset-top)]">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3">
           <div className="flex items-center justify-between gap-3 sm:gap-4">
             <button
@@ -4562,7 +4620,7 @@ export default function App() {
               </button>
 
               {isFilterMenuOpen && (
-                <div className="absolute top-full right-0 sm:right-12 mt-2 w-64 bg-[#121215] border border-white/10 rounded-2xl shadow-2xl p-4 z-50 flex flex-col gap-4">
+                <div className="absolute top-full right-0 sm:right-12 mt-2 w-64 bg-[var(--bg-modal)] border border-white/10 rounded-2xl shadow-2xl p-4 z-50 flex flex-col gap-4">
                   <div className="space-y-1">
                     <label htmlFor="sort-select" className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest">
                       Ordina per
@@ -4619,7 +4677,7 @@ export default function App() {
               )}
 
               {isProfileMenuOpen && (
-                <div className="absolute top-full right-0 mt-2 w-72 bg-[#121215] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
+                <div className="absolute top-full right-0 mt-2 w-72 bg-[var(--bg-modal)] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
                   <div className="p-4 border-b border-white/5 flex items-center gap-3">
                     {user.photoURL ? (
                       <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="w-10 h-10 rounded-full object-cover" />
@@ -4819,7 +4877,7 @@ export default function App() {
               </div>
             ) : (
               <div className={gridClass}>
-                <AnimatePresence mode="popLayout">{filteredItems.map(renderCard)}</AnimatePresence>
+                {filteredItems.map(renderCard)}
               </div>
             )}
           </div>
@@ -4828,7 +4886,7 @@ export default function App() {
 
       {/* Mobile Nav */}
       <nav
-        className="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950/95 backdrop-blur-xl border-t border-white/10 px-2 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] grid grid-cols-5 items-end z-40"
+        className="sm:hidden fixed bottom-0 left-0 right-0 bg-[#0a090d]/90 backdrop-blur-xl border-t border-white/[0.06] px-2 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] grid grid-cols-5 items-end z-40"
         aria-label="Navigazione"
       >
         {[
@@ -4859,8 +4917,8 @@ export default function App() {
         >
           <div
             className={cn(
-              "w-14 h-14 rounded-full shadow-2xl flex items-center justify-center border-4 border-zinc-950 active:scale-95 transition-transform",
-              view === "wishlist" ? "bg-rose-600 text-white" : "bg-white text-zinc-900",
+              "w-14 h-14 rounded-full shadow-2xl flex items-center justify-center border-4 border-[#0a090d] active:scale-95 transition-transform",
+              view === "wishlist" ? "bg-rose-600 text-white" : "btn-primary",
             )}
           >
             <Plus className="w-7 h-7" />
@@ -4896,7 +4954,7 @@ export default function App() {
           onClick={() => openNewItem()}
           className={cn(
             "hidden sm:flex fixed bottom-8 right-8 w-16 h-16 rounded-full shadow-2xl items-center justify-center hover:scale-110 active:scale-95 transition-all z-40",
-            view === "wishlist" ? "bg-rose-600 text-white" : "bg-white text-zinc-900",
+            view === "wishlist" ? "bg-rose-600 text-white shadow-rose-900/50" : "btn-primary",
           )}
           title="Aggiungi elemento (N)"
           aria-label="Aggiungi elemento"

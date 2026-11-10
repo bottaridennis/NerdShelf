@@ -1,13 +1,14 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
+
     // Default deny all
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper functions
+    // ---------- Helpers ----------
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -24,6 +25,42 @@ service cloud.firestore {
       return resource.data;
     }
 
+    // Every field the app is allowed to write on a library item.
+    function allowedFields() {
+      return [
+        'userId', 'title', 'author', 'category', 'status', 'isWishlist',
+        'seriesName', 'volumeNumber', 'volumeCount', 'totalVolumes',
+        'genre', 'isbn', 'system', 'coverUrl',
+        'loanedTo', 'loanDate',
+        'description', 'notes', 'review', 'rating', 'tags',
+        'totalPages', 'pagesRead', 'price',
+        'createdAt', 'updatedAt'
+      ];
+    }
+
+    function optString(data, field, max) {
+      return !(field in data) || (data[field] is string && data[field].size() <= max);
+    }
+
+    function optInt(data, field, min, max) {
+      return !(field in data) || (data[field] is int && data[field] >= min && data[field] <= max);
+    }
+
+    function optNumber(data, field, min, max) {
+      return !(field in data) || (data[field] is number && data[field] >= min && data[field] <= max);
+    }
+
+    // Tags: at most 50, and the first ones (rules can't loop) must be short strings.
+    function validTags(data) {
+      return !('tags' in data) || (
+        data.tags is list && data.tags.size() <= 50 &&
+        (data.tags.size() < 1 || (data.tags[0] is string && data.tags[0].size() <= 60)) &&
+        (data.tags.size() < 2 || (data.tags[1] is string && data.tags[1].size() <= 60)) &&
+        (data.tags.size() < 3 || (data.tags[2] is string && data.tags[2].size() <= 60))
+      );
+    }
+
+    // Field types and limits (shared by create and update).
     function isValidLibraryItem(data) {
       return data.keys().hasAll(['userId', 'title']) &&
         data.userId == request.auth.uid &&
@@ -31,52 +68,60 @@ service cloud.firestore {
         (!('category' in data) || data.category in ['book', 'manga', 'gdr']) &&
         (!('status' in data) || data.status in ['unread', 'reading', 'read']) &&
         (!('isWishlist' in data) || data.isWishlist is bool) &&
-        (!('author' in data) || (data.author is string && data.author.size() <= 300)) &&
-        (!('seriesName' in data) || (data.seriesName is string && data.seriesName.size() <= 300)) &&
-        (!('volumeNumber' in data) || (data.volumeNumber is number)) &&
-        (!('totalVolumes' in data) || ((data.totalVolumes is string && data.totalVolumes.size() <= 100) || data.totalVolumes is number)) &&
-        (!('genre' in data) || (data.genre is string && data.genre.size() <= 200)) &&
-        (!('isbn' in data) || (data.isbn is string && data.isbn.size() <= 50)) &&
-        (!('system' in data) || (data.system is string && data.system.size() <= 200)) &&
-        (!('coverUrl' in data) || (data.coverUrl is string && data.coverUrl.size() <= 5000)) &&
-        (!('loanedTo' in data) || (data.loanedTo is string && data.loanedTo.size() <= 200)) &&
-        (!('loanDate' in data) || (data.loanDate is string && data.loanDate.size() <= 100) || (data.loanDate is timestamp)) &&
-        (!('description' in data) || (data.description is string && data.description.size() <= 10000)) &&
-        (!('notes' in data) || (data.notes is string && data.notes.size() <= 10000)) &&
-        (!('review' in data) || (data.review is string && data.review.size() <= 10000)) &&
-        (!('rating' in data) || (data.rating is number && data.rating >= 1 && data.rating <= 5)) &&
-        (!('totalPages' in data) || (data.totalPages is number && data.totalPages >= 0)) &&
-        (!('pagesRead' in data) || (data.pagesRead is number && data.pagesRead >= 0)) &&
-        (!('price' in data) || (data.price is number && data.price >= 0)) &&
-        (!('tags' in data) || (data.tags is list && data.tags.size() <= 50));
+        optString(data, 'author', 300) &&
+        optString(data, 'seriesName', 300) &&
+        optInt(data, 'volumeNumber', 1, 100000) &&
+        optInt(data, 'volumeCount', 1, 1000) &&
+        (!('totalVolumes' in data) || (data.totalVolumes is string && data.totalVolumes.size() <= 100) || data.totalVolumes is number) &&
+        optString(data, 'genre', 200) &&
+        optString(data, 'isbn', 50) &&
+        optString(data, 'system', 200) &&
+        optString(data, 'coverUrl', 5000) &&
+        optString(data, 'loanedTo', 200) &&
+        (!('loanDate' in data) || data.loanDate is timestamp || (data.loanDate is string && data.loanDate.size() <= 100)) &&
+        optString(data, 'description', 10000) &&
+        optString(data, 'notes', 10000) &&
+        optString(data, 'review', 10000) &&
+        optInt(data, 'rating', 1, 5) &&
+        optInt(data, 'totalPages', 0, 100000) &&
+        optInt(data, 'pagesRead', 0, 100000) &&
+        optNumber(data, 'price', 0, 100000) &&
+        validTags(data) &&
+        (!('createdAt' in data) || data.createdAt is timestamp) &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
+
+    // ---------- Collections ----------
 
     match /test/{docId} {
       allow read: if isSignedIn();
     }
 
     match /libraryItems/{itemId} {
-      // Direct document reads
       allow get: if isSignedIn() && existing().userId == request.auth.uid;
 
-      // Filtered collection queries where client filters by userId == auth.uid
+      // Queries must filter by userId == auth.uid
       allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
 
-      // Item creation
+      // Create: only known fields, server timestamp for createdAt.
       allow create: if isSignedIn() &&
         isValidId(itemId) &&
+        incoming().keys().hasOnly(allowedFields()) &&
+        incoming().createdAt == request.time &&
         isValidLibraryItem(incoming());
 
-      // Item update: owner cannot transfer ownership, must remain valid
+      // Update: owner only; only known fields may change (legacy unknown
+      // fields that are left untouched are tolerated); createdAt and
+      // ownership are immutable; updatedAt, when sent, is the server time.
       allow update: if isSignedIn() &&
         isValidId(itemId) &&
-        (
-          (existing().userId == request.auth.uid && incoming().userId == existing().userId) ||
-          (!('userId' in existing()) && incoming().userId == request.auth.uid)
-        ) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(allowedFields()) &&
+        !incoming().diff(existing()).affectedKeys().hasAny(['userId', 'createdAt']) &&
+        (!('updatedAt' in incoming().diff(existing()).affectedKeys()) || incoming().updatedAt == request.time) &&
         isValidLibraryItem(incoming());
 
-      // Item deletion
       allow delete: if isSignedIn() &&
         isValidId(itemId) &&
         existing().userId == request.auth.uid;
