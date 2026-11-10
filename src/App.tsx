@@ -31,6 +31,7 @@ import {
   searchOpenLibrary,
   searchAniList,
   searchMangaDex,
+  lookupIsbn,
   type CoverResult,
 } from "./services/apiService";
 import {
@@ -41,9 +42,7 @@ import {
   LogOut,
   Search,
   Filter,
-  BookOpen,
   CheckCircle2,
-  Clock,
   Trash2,
   ChevronRight,
   X,
@@ -51,16 +50,20 @@ import {
   Scan,
   Heart,
   Layers,
-  UserPlus,
-  Calendar,
   Handshake,
   Edit3,
   Download,
   Upload,
   User as UserIcon,
-  Settings,
   ShoppingBag,
   Check,
+  AlertTriangle,
+  LayoutGrid,
+  BarChart3,
+  FileSpreadsheet,
+  Loader2,
+  ListChecks,
+  Info,
 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import { motion, AnimatePresence } from "framer-motion";
@@ -69,6 +72,7 @@ import { twMerge } from "tailwind-merge";
 import { Logo } from "./components/Logo";
 import { ShelfView } from "./components/ShelfView";
 import { BookCover } from "./components/BookCover";
+import { getVolume } from "./lib/utils";
 import {
   PieChart,
   Pie,
@@ -87,15 +91,93 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// Normalises Firestore Timestamps, Dates, serialized timestamps ({seconds})
+// coming from JSON backups and ISO strings into a Date.
+const toDate = (date: any): Date | null => {
+  if (!date) return null;
+  if (typeof date.toDate === "function") return date.toDate();
+  if (date instanceof Date) return date;
+  if (typeof date === "object" && typeof date.seconds === "number") {
+    return new Date(date.seconds * 1000);
+  }
+  const parsed = new Date(date);
+  return isNaN(parsed.getTime()) ? null : parsed;
+};
+
 const formatDate = (date: any) => {
-  if (!date) return "";
-  if (typeof date.toDate === "function") {
-    return date.toDate().toLocaleDateString();
+  const d = toDate(date);
+  return d ? d.toLocaleDateString() : "";
+};
+
+const daysSince = (date: any): number | null => {
+  const d = toDate(date);
+  if (!d) return null;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86_400_000));
+};
+
+const formatPrice = (price: any) => {
+  const n = Number(price);
+  return isNaN(n) ? "€0.00" : `€${n.toFixed(2)}`;
+};
+
+
+// Returns missing volume numbers between 1 and the highest owned volume.
+const findMissingVolumes = (volumes: number[]) => {
+  if (volumes.length === 0) return [];
+  const owned = new Set(volumes);
+  const max = Math.max(...volumes);
+  const missing: number[] = [];
+  for (let v = 1; v <= max && missing.length < 50; v++) {
+    if (!owned.has(v)) missing.push(v);
   }
-  if (date instanceof Date) {
-    return date.toLocaleDateString();
+  return missing;
+};
+
+const compressRanges = (nums: number[]) => {
+  const parts: string[] = [];
+  let i = 0;
+  while (i < nums.length) {
+    let j = i;
+    while (j + 1 < nums.length && nums[j + 1] === nums[j] + 1) j++;
+    parts.push(i === j ? `${nums[i]}` : `${nums[i]}–${nums[j]}`);
+    i = j + 1;
   }
-  return String(date);
+  return parts.join(", ");
+};
+
+// Closes overlays on Escape.
+const useEscapeKey = (active: boolean, handler: () => void) => {
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handler();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, handler]);
+};
+
+// Locks page scroll while a modal is open.
+const useBodyScrollLock = (active: boolean) => {
+  useEffect(() => {
+    if (!active) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [active]);
+};
+
+// Enter submits a form only from single-line inputs, never from textareas or
+// inputs that handle Enter themselves (e.g. tag entry).
+const isPlainEnterSubmit = (e: React.KeyboardEvent) => {
+  if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return false;
+  const target = e.target as HTMLElement;
+  if (target.tagName === "TEXTAREA") return false;
+  if (target.dataset.enterHandled === "true") return false;
+  if (target.tagName === "BUTTON") return false;
+  return true;
 };
 
 enum OperationType {
@@ -151,13 +233,26 @@ function handleFirestoreError(
     path,
   };
   console.error("Firestore Error: ", JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  // Surface the error to the user via the app-level toast instead of crashing
+  // the whole UI through the ErrorBoundary.
+  firestoreErrorListener?.(errInfo);
 }
+
+let firestoreErrorListener: ((info: FirestoreErrorInfo) => void) | null = null;
+
+const describeFirestoreError = (info: FirestoreErrorInfo) => {
+  const msg = info.error.toLowerCase();
+  if (msg.includes("permission")) return "Permesso negato dal database.";
+  if (msg.includes("offline") || msg.includes("network") || msg.includes("unavailable")) {
+    return "Sei offline: le modifiche verranno sincronizzate appena possibile.";
+  }
+  return "Si è verificato un errore durante il salvataggio.";
+};
 
 // --- Types ---
 type Category = "book" | "manga" | "gdr";
 type Status = "unread" | "reading" | "read";
-type SortOption = "title" | "author" | "status" | "date" | "volume" | "series";
+type SortOption = "title" | "author" | "status" | "date" | "volume" | "series" | "rating";
 
 interface LibraryItem {
   id: string;
@@ -259,6 +354,7 @@ const ISBNScanner = ({
   const [error, setError] = useState<string | null>(null);
   const [isStarted, setIsStarted] = useState(false);
   const [scanner, setScanner] = useState<Html5Qrcode | null>(null);
+  useEscapeKey(true, onClose);
 
   useEffect(() => {
     const newScanner = new Html5Qrcode("reader");
@@ -278,7 +374,7 @@ const ISBNScanner = ({
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 250, height: 150 } },
         (decodedText) => {
-          onScan(decodedText);
+          onScan(decodedText.replace(/[^0-9Xx]/g, "") || decodedText);
           scanner
             .stop()
             .then(() => onClose())
@@ -294,28 +390,29 @@ const ISBNScanner = ({
         err?.toString().includes("Permission denied")
       ) {
         setError(
-          "Camera access is blocked by your browser. To fix this:\n1. Click the camera icon in your browser address bar\n2. Select 'Always allow' or 'Reset permission'\n3. Refresh the page.",
+          "Il browser ha bloccato l'accesso alla fotocamera. Per risolvere:\n1. Tocca l'icona della fotocamera nella barra degli indirizzi\n2. Scegli 'Consenti sempre'\n3. Ricarica la pagina.",
         );
       } else {
-        setError("Could not start camera. Make sure no other app is using it.");
+        setError("Impossibile avviare la fotocamera. Assicurati che nessun'altra app la stia usando.");
       }
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-white/95 backdrop-blur-xl">
-      <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/85 backdrop-blur-xl">
+      <div className="bg-zinc-900 border border-white/10 w-full max-w-md rounded-[2.5rem] p-6 sm:p-8 space-y-6 shadow-2xl">
         <div className="flex justify-between items-center">
           <div className="space-y-1">
             <h3 className="text-xl font-serif font-bold text-white">
-              ISBN Scanner
+              Scanner ISBN
             </h3>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-[0.2em] font-bold">
-              Hardware Interface v1.0
+            <p className="text-[11px] text-zinc-500">
+              Inquadra il codice a barre sul retro del libro
             </p>
           </div>
           <button
             onClick={onClose}
+            aria-label="Chiudi scanner"
             className="p-2 text-zinc-500 hover:text-white transition-colors"
           >
             <X className="w-6 h-6" />
@@ -334,7 +431,7 @@ const ISBNScanner = ({
                 onClick={startScanner}
                 className="px-6 py-2.5 bg-white text-zinc-900 text-xs font-bold uppercase tracking-widest rounded-full hover:bg-white/10 transition-all"
               >
-                Initialize Camera
+                Avvia fotocamera
               </button>
             </div>
           )}
@@ -351,7 +448,7 @@ const ISBNScanner = ({
                 onClick={() => window.location.reload()}
                 className="text-[10px] font-bold text-white underline underline-offset-4 uppercase tracking-widest"
               >
-                Refresh Page
+                Ricarica pagina
               </button>
             </div>
           )}
@@ -376,7 +473,7 @@ const ISBNScanner = ({
               isStarted ? "bg-green-500 animate-pulse" : "bg-zinc-800",
             )}
           ></div>
-          <span>{isStarted ? "System Active" : "Standby Mode"}</span>
+          <span>{isStarted ? "Scansione attiva" : "In attesa"}</span>
         </div>
       </div>
     </div>
@@ -384,12 +481,26 @@ const ISBNScanner = ({
 };
 
 const AuthScreen = () => {
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
+    setIsSigningIn(true);
+    setLoginError(null);
     try {
       await signInWithPopup(auth, provider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login failed:", error);
+      if (error?.code === "auth/popup-closed-by-user" || error?.code === "auth/cancelled-popup-request") {
+        // user dismissed the popup: nothing to report
+      } else if (error?.code === "auth/popup-blocked") {
+        setLoginError("Il browser ha bloccato il popup di accesso. Consenti i popup per questo sito e riprova.");
+      } else {
+        setLoginError("Accesso non riuscito. Controlla la connessione e riprova.");
+      }
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -415,7 +526,7 @@ const AuthScreen = () => {
               Nerd<span className="text-[var(--color-brand-orange)]">Shelf</span>
             </h1>
             <p className="text-zinc-500 text-lg font-light">
-              Your personal sanctuary for classics, manga, and epic quests.
+              Il tuo rifugio personale per classici, manga e manuali di gioco di ruolo.
             </p>
           </div>
         </div>
@@ -429,18 +540,29 @@ const AuthScreen = () => {
 
           <button
             onClick={handleLogin}
-            className="w-full py-4 px-6 bg-white text-zinc-900 font-semibold rounded-2xl hover:bg-white/10 transition-all flex items-center justify-center space-x-3 shadow-xl"
+            disabled={isSigningIn}
+            className="w-full py-4 px-6 bg-white text-zinc-900 font-semibold rounded-2xl hover:bg-zinc-200 transition-all flex items-center justify-center space-x-3 shadow-xl disabled:opacity-70"
           >
-            <img
-              src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
-              className="w-5 h-5"
-              alt="Google"
-            />
-            <span>Enter the Library</span>
+            {isSigningIn ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <img
+                src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                className="w-5 h-5"
+                alt="Google"
+              />
+            )}
+            <span>{isSigningIn ? "Apro i cancelli..." : "Entra con Google"}</span>
           </button>
 
+          {loginError && (
+            <p role="alert" className="text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+              {loginError}
+            </p>
+          )}
+
           <p className="text-xs text-zinc-500 uppercase tracking-widest">
-            Secure Multi-User Access
+            La tua collezione, sincronizzata su ogni dispositivo
           </p>
         </div>
       </motion.div>
@@ -458,12 +580,14 @@ const CategoryChip = ({
   active: boolean;
   onClick: () => void;
   colorClass: string;
+  key?: React.Key;
 }) => (
   <button
     onClick={onClick}
+    aria-pressed={active}
     className={cn(
-      "px-4 py-2 rounded-full text-sm font-medium transition-all whitespace-nowrap border border-white/10",
-      active ? colorClass : "bg-white/5 text-zinc-500 hover:bg-white/10",
+      "px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap border border-white/10 shrink-0",
+      active ? colorClass : "bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-zinc-200",
     )}
   >
     {label}
@@ -486,6 +610,8 @@ const StarRating = ({
           key={star}
           type="button"
           disabled={readonly}
+          aria-label={readonly ? undefined : `${star} ${star === 1 ? "stella" : "stelle"}${star === rating ? " (tocca di nuovo per rimuovere)" : ""}`}
+          title={readonly ? undefined : `${star}/5`}
           onClick={() => setRating?.(star === rating ? 0 : star)}
           className={cn(
             "p-1 transition-all",
@@ -532,7 +658,7 @@ const ItemCard = ({
       color: "text-amber-600",
       progressColor: "bg-amber-600 shadow-[0_0_8px_rgba(217,119,6,0.8)]",
       border: "category-book",
-      label: "Classic",
+      label: "Libro",
     },
     manga: {
       icon: Sparkles,
@@ -546,18 +672,19 @@ const ItemCard = ({
       color: "text-red-700",
       progressColor: "bg-red-700 shadow-[0_0_8px_rgba(185,28,28,0.8)]",
       border: "category-gdr",
-      label: "RPG",
+      label: "GDR",
     },
   };
 
   const statusBadgeConfig: Record<Status, { label: string; color: string }> = {
-    unread: { label: "To Read", color: "text-zinc-400 bg-white/5 border-white/10" },
-    reading: { label: "Reading", color: "text-blue-400 bg-blue-500/10 border-blue-500/20" },
-    read: { label: "Finished", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
+    unread: { label: "Da leggere", color: "text-zinc-400 bg-white/5 border-white/10" },
+    reading: { label: "In lettura", color: "text-blue-400 bg-blue-500/10 border-blue-500/20" },
+    read: { label: "Finito", color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" },
   };
 
-  const config = categoryConfig[item.category];
-  const Icon = config.icon;
+  const config = categoryConfig[item.category] || categoryConfig.book;
+  const volume = getVolume(item);
+  const statusBadge = statusBadgeConfig[item.status] || statusBadgeConfig.unread;
 
   return (
     <motion.div
@@ -566,6 +693,17 @@ const ItemCard = ({
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.95 }}
       whileHover={{ y: -5 }}
+      role="button"
+      tabIndex={0}
+      aria-pressed={selectionMode ? !!isSelected : undefined}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (selectionMode) onSelect?.(item.id);
+          else onOpenDetails(item);
+        }
+      }}
       onClick={() => {
         if (selectionMode) {
           onSelect?.(item.id);
@@ -574,20 +712,12 @@ const ItemCard = ({
         }
       }}
       className={cn(
-        "glass-card p-4 rounded-2xl flex flex-row sm:flex-col items-center sm:items-stretch space-x-4 sm:space-x-0 sm:space-y-4 group relative overflow-hidden cursor-pointer",
+        "glass-card p-4 rounded-2xl flex flex-row sm:flex-col items-center sm:items-stretch space-x-4 sm:space-x-0 sm:space-y-4 group relative overflow-hidden cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand-orange)]",
         config.border,
-        isSelected && "ring-2 ring-white/50 border-white/30/40 bg-white/10",
+        isSelected && "ring-2 ring-[var(--color-brand-orange)] border-transparent bg-white/10",
       )}
     >
-      <button
-        onClick={(e) => {
-          if (selectionMode) {
-            onSelect?.(item.id);
-          } else {
-            onOpenDetails(item);
-          }
-          e.stopPropagation();
-        }}
+      <div
         className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] flex-shrink-0 bg-black/40 rounded-xl overflow-hidden relative shadow-2xl border border-white/10 group-hover:border-white/20 transition-all text-left"
       >
         <BookCover
@@ -595,35 +725,26 @@ const ItemCard = ({
           author={item.author}
           category={item.category}
           system={item.system}
-          volumeNumber={item.volumeNumber}
+          volumeNumber={volume}
           coverUrl={item.coverUrl}
         />
         {item.loanedTo && (
-          <div className="absolute top-2 left-2 bg-amber-500 text-white text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded shadow-lg z-30">
-            Loaned
-          </div>
-        )}
-        {item.isWishlist && onMarkAsBought && !selectionMode && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onMarkAsBought(item);
-            }}
-            className="absolute top-2 left-2 z-30 p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full shadow-xl transition-all hover:scale-110 active:scale-95 cursor-pointer"
-            title="Segna come comprato"
+          <div
+            className="absolute bottom-2 left-2 bg-amber-500 text-white text-[8px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded shadow-lg z-30 flex items-center gap-1 max-w-[70%]"
+            title={`In prestito a ${item.loanedTo}`}
           >
-            <Check className="w-3 h-3 stroke-[3]" />
-          </button>
+            <Handshake className="w-2.5 h-2.5 shrink-0" />
+            <span className="truncate">{item.loanedTo}</span>
+          </div>
         )}
         {item.isWishlist && (
           <div className="absolute top-2 right-2 bg-rose-500/90 text-white p-1 rounded-full shadow-lg z-30">
             <Heart className="w-3 h-3 fill-white" />
           </div>
         )}
-        {item.volumeNumber && (
-          <div className="absolute bottom-2 right-2 bg-zinc-900/90 border border-white/20 text-white w-7 h-7 rounded-full shadow-lg flex items-center justify-center backdrop-blur-sm z-30">
-            <span className="font-bold text-[11px] leading-none">{item.volumeNumber}</span>
+        {volume !== undefined && item.coverUrl && (
+          <div className="absolute bottom-2 right-2 bg-zinc-900/90 border border-white/20 text-white min-w-7 h-7 px-1 rounded-full shadow-lg flex items-center justify-center backdrop-blur-sm z-30">
+            <span className="font-bold text-[11px] leading-none">{volume}</span>
           </div>
         )}
         {selectionMode && (
@@ -639,15 +760,15 @@ const ItemCard = ({
               className={cn(
                 "w-8 h-8 rounded-full border-2 flex items-center justify-center transition-all",
                 isSelected
-                  ? "bg-zinc-900 border-white/30 text-white"
-                  : "border-white/100 text-transparent",
+                  ? "bg-[var(--color-brand-orange)] border-[var(--color-brand-orange)] text-white"
+                  : "border-white text-transparent",
               )}
             >
               <CheckCircle2 className="w-5 h-5" />
             </div>
           </div>
         )}
-      </button>
+      </div>
 
       <div className="flex-1 min-w-0 flex flex-col justify-between h-full sm:min-h-[100px]">
         <div className="flex justify-between items-start gap-2">
@@ -662,9 +783,9 @@ const ItemCard = ({
           </div>
           {/* Mobile Volume Badge */}
           <div className="sm:hidden">
-            {item.category === "manga" && item.totalVolumes && (
+            {volume !== undefined && (
               <span className="text-[9px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30 shrink-0">
-                Vol. {item.totalVolumes}
+                Vol. {volume}
               </span>
             )}
           </div>
@@ -686,9 +807,9 @@ const ItemCard = ({
               >
                 {config.label}
               </span>
-              {item.category === "manga" && item.totalVolumes && (
+              {volume !== undefined && (
                 <span className="text-[9px] font-bold bg-purple-900/30 text-purple-400 px-1.5 py-0.5 rounded border border-purple-700/30 shrink-0">
-                  Vol. {item.totalVolumes}
+                  Vol. {volume}
                 </span>
               )}
             </div>
@@ -730,10 +851,10 @@ const ItemCard = ({
             <span
               className={cn(
                 "text-[8px] sm:text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded border",
-                statusBadgeConfig[item.status].color,
+                statusBadge.color,
               )}
             >
-              {statusBadgeConfig[item.status].label}
+              {statusBadge.label}
             </span>
 
             {onEdit && !selectionMode && (
@@ -743,8 +864,9 @@ const ItemCard = ({
                   e.stopPropagation();
                   onEdit(item);
                 }}
-                className="p-1 rounded-lg text-zinc-500 hover:text-white hover:bg-white/10 transition-colors opacity-80 sm:opacity-0 group-hover:opacity-100"
-                title="Edit Item"
+                className="p-1 rounded-lg text-zinc-500 hover:text-white hover:bg-white/10 transition-colors opacity-80 sm:opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                title="Modifica"
+                aria-label={`Modifica ${item.title}`}
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
@@ -755,7 +877,7 @@ const ItemCard = ({
         {item.totalPages && item.totalPages > 0 ? (
           <div className="mt-3 space-y-1">
             <div className="flex justify-between items-center text-[10px] uppercase font-bold tracking-widest px-0.5">
-              <span className="text-zinc-600">Progress</span>
+              <span className="text-zinc-600">Progresso</span>
               <span className="text-zinc-400">
                 {Math.round(((item.pagesRead || 0) / item.totalPages) * 100)}%
               </span>
@@ -785,7 +907,7 @@ const ItemCard = ({
             title="Segna come comprato e sposta nella libreria"
           >
             <ShoppingBag className="w-3.5 h-3.5 group-hover/buy:scale-110 transition-transform" />
-            <span>Segna come Comprato</span>
+            <span>Segna come comprato</span>
           </button>
         )}
       </div>
@@ -793,76 +915,166 @@ const ItemCard = ({
   );
 };
 
+const inputClass =
+  "w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-sm text-white focus:outline-none focus:border-white/30 focus:bg-white/[0.07] placeholder:text-zinc-500 transition-colors";
+const labelClass =
+  "text-[9px] uppercase tracking-widest text-zinc-500 font-bold";
+
+const FieldLabel = ({
+  children,
+  htmlFor,
+}: {
+  children: React.ReactNode;
+  htmlFor?: string;
+}) => (
+  <label htmlFor={htmlFor} className={labelClass}>
+    {children}
+  </label>
+);
+
+const ToggleSwitch = ({
+  checked,
+  onChange,
+  activeClass,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  activeClass: string;
+  label: string;
+}) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
+    onClick={() => onChange(!checked)}
+    className={cn(
+      "w-11 h-6 rounded-full transition-all relative shrink-0",
+      checked ? activeClass : "bg-zinc-700",
+    )}
+  >
+    <span
+      className={cn(
+        "absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all",
+        checked ? "left-6" : "left-1",
+      )}
+    />
+  </button>
+);
+
+const emptyForm = () => ({
+  title: "",
+  author: "",
+  category: "book" as Category,
+  status: "unread" as Status,
+  genre: "",
+  price: "" as string | number,
+  isbn: "",
+  totalVolumes: "",
+  volumeNumber: "" as string | number,
+  volumeCount: "" as string | number,
+  system: "",
+  totalPages: "" as string | number,
+  pagesRead: "" as string | number,
+  coverUrl: "",
+  isWishlist: false,
+  seriesName: "",
+  loanedTo: "",
+  loanDate: null as any,
+  description: "",
+  notes: "",
+  rating: 0,
+  review: "",
+  tags: [] as string[],
+});
+
+const BOOK_GENRES = [
+  "Novel",
+  "Fantasy",
+  "Sci-Fi",
+  "Thriller",
+  "Horror",
+  "Poetry",
+  "Biography",
+  "History",
+  "Cookbook",
+  "Other",
+];
+
 const ItemModal = ({
   isOpen,
   onClose,
   onSave,
   initialData,
-  existingAuthors = [],
+  preset,
+  existingItems = [],
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSave: (data: any) => void;
   initialData?: LibraryItem | null;
-  existingAuthors?: string[];
+  preset?: Partial<LibraryItem> | null;
+  existingItems?: LibraryItem[];
 }) => {
-  const [formData, setFormData] = useState({
-    title: "",
-    author: "",
-    category: "book" as Category,
-    status: "unread" as Status,
-    genre: "",
-    price: "" as string | number,
-    isbn: "",
-    totalVolumes: "",
-    volumeNumber: "" as string | number,
-    volumeCount: "" as string | number,
-    system: "",
-    totalPages: "" as string | number,
-    pagesRead: "" as string | number,
-    coverUrl: "",
-    isWishlist: false,
-    seriesName: "",
-    loanedTo: "",
-    loanDate: null as any,
-    description: "",
-    notes: "",
-    rating: 0,
-    review: "",
-    tags: [] as string[],
-  });
-
+  const [formData, setFormData] = useState(emptyForm);
   const [coverResults, setCoverResults] = useState<CoverResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchFeedback, setSearchFeedback] = useState<string | null>(null);
+  const [isLookingUpIsbn, setIsLookingUpIsbn] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [isBulkMode, setIsBulkMode] = useState(false);
   const [bulkCount, setBulkCount] = useState(1);
+  const [tagDraft, setTagDraft] = useState("");
+  const [showMore, setShowMore] = useState(false);
 
-  const searchCovers = async () => {
-    if (!formData.title) return;
-    setIsSearching(true);
-    try {
-      let results: CoverResult[] = [];
-      if (formData.category === "manga") {
-        const [aniList, mangaDex] = await Promise.all([
-          searchAniList(formData.title),
-          searchMangaDex(formData.title),
-        ]);
-        results = [...aniList, ...mangaDex];
-      } else {
-        results = await searchOpenLibrary(formData.title);
-      }
-      setCoverResults(results);
-    } catch (error) {
-      console.error("Cover search failed:", error);
-    } finally {
-      setIsSearching(false);
-    }
-  };
+  const isEditing = Boolean(initialData);
+
+  useEscapeKey(isOpen && !showScanner, onClose);
+  useBodyScrollLock(isOpen);
+
+  const suggestions = useMemo(() => {
+    const authors = new Set<string>();
+    const series = new Set<string>();
+    const tags = new Set<string>();
+    const systems = new Set<string>();
+    existingItems.forEach((i) => {
+      if (i.author) authors.add(i.author);
+      if (i.seriesName) series.add(i.seriesName);
+      if (i.system) systems.add(i.system);
+      (i.tags || []).forEach((t) => tags.add(t));
+    });
+    const sort = (set: Set<string>) =>
+      Array.from(set).sort((a, b) => a.localeCompare(b));
+    return {
+      authors: sort(authors),
+      series: sort(series),
+      tags: sort(tags),
+      systems: sort(systems),
+    };
+  }, [existingItems]);
+
+  const update = (patch: Partial<ReturnType<typeof emptyForm>>) =>
+    setFormData((prev) => ({ ...prev, ...patch }));
 
   useEffect(() => {
+    if (!isOpen) return;
+    setCoverResults([]);
+    setSearchFeedback(null);
+    setIsBulkMode(false);
+    setBulkCount(1);
+    setTagDraft("");
+
     if (initialData) {
+      // Older entries stored the volume number in the free-text `totalVolumes`
+      // field: migrate it into `volumeNumber` when editing.
+      const legacyVolume = parseInt(initialData.totalVolumes || "", 10);
+      const migrateLegacy =
+        initialData.volumeNumber === undefined &&
+        !isNaN(legacyVolume) &&
+        String(legacyVolume) === String(initialData.totalVolumes).trim();
       setFormData({
+        ...emptyForm(),
         title: initialData.title || "",
         author: initialData.author || "",
         category: initialData.category || "book",
@@ -870,8 +1082,10 @@ const ItemModal = ({
         genre: initialData.genre || "",
         price: initialData.price ?? "",
         isbn: initialData.isbn || "",
-        totalVolumes: initialData.totalVolumes || "",
-        volumeNumber: initialData.volumeNumber ?? "",
+        totalVolumes: migrateLegacy ? "" : initialData.totalVolumes || "",
+        volumeNumber: migrateLegacy
+          ? legacyVolume
+          : (initialData.volumeNumber ?? ""),
         volumeCount: initialData.volumeCount ?? "",
         system: initialData.system || "",
         totalPages: initialData.totalPages ?? "",
@@ -882,120 +1096,221 @@ const ItemModal = ({
         loanedTo: initialData.loanedTo || "",
         loanDate: initialData.loanDate || null,
         description: initialData.description || "",
-        notes: initialData.notes || initialData.description || "",
+        notes: initialData.notes || "",
         rating: initialData.rating || 0,
         review: initialData.review || "",
         tags: initialData.tags || [],
       });
+      setShowMore(
+        Boolean(
+          initialData.notes ||
+            initialData.review ||
+            initialData.rating ||
+            initialData.price !== undefined ||
+            (initialData.tags && initialData.tags.length),
+        ),
+      );
     } else {
       setFormData({
-        title: "",
-        author: "",
-        category: "book",
-        status: "unread",
-        genre: "",
-        price: "",
-        isbn: "",
-        totalVolumes: "",
-        volumeNumber: "",
-        volumeCount: "",
-        system: "",
-        totalPages: "",
-        pagesRead: "",
-        coverUrl: "",
-        isWishlist: false,
-        seriesName: "",
-        loanedTo: "",
-        loanDate: null,
-        description: "",
-        notes: "",
-        rating: 0,
-        review: "",
-        tags: [],
+        ...emptyForm(),
+        ...(preset?.category ? { category: preset.category } : {}),
+        ...(preset?.isWishlist ? { isWishlist: true } : {}),
+        ...(preset?.seriesName ? { seriesName: preset.seriesName } : {}),
+        ...(preset?.author ? { author: preset.author } : {}),
+        ...(preset?.volumeNumber ? { volumeNumber: preset.volumeNumber } : {}),
       });
+      setShowMore(false);
     }
-  }, [initialData, isOpen]);
+  }, [initialData, preset, isOpen]);
 
-  const fetchMetadata = async (isbn: string) => {
+  const duplicate = useMemo(() => {
+    const title = formData.title.trim().toLowerCase();
+    if (!title) return null;
+    const vol = parseInt(String(formData.volumeNumber), 10);
+    return (
+      existingItems.find((i) => {
+        if (initialData && i.id === initialData.id) return false;
+        if (i.title.trim().toLowerCase() !== title) return false;
+        const iv = getVolume(i);
+        if (!isNaN(vol) || iv !== undefined) return iv === (isNaN(vol) ? undefined : vol);
+        return true;
+      }) || null
+    );
+  }, [formData.title, formData.volumeNumber, existingItems, initialData]);
+
+  const searchCovers = async () => {
+    const term = (formData.seriesName || formData.title).trim();
+    if (!term) return;
+    setIsSearching(true);
+    setSearchFeedback(null);
     try {
-      setIsSearching(true);
-      const res = await fetch(
-        `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`,
-      );
-      const data = await res.json();
-      if (data.items && data.items.length > 0) {
-        const info = data.items[0].volumeInfo;
-        setFormData((prev) => ({
-          ...prev,
-          title: info.title || prev.title,
-          author: info.authors ? info.authors.join(", ") : prev.author,
-          totalPages: info.pageCount || prev.totalPages,
-          coverUrl: info.imageLinks
-            ? info.imageLinks.thumbnail.replace("http:", "https:")
-            : prev.coverUrl,
-          description: info.description || prev.description,
-          isbn: isbn,
-        }));
+      let results: CoverResult[] = [];
+      if (formData.category === "manga") {
+        const [aniList, mangaDex] = await Promise.all([
+          searchAniList(term),
+          searchMangaDex(term),
+        ]);
+        results = [...aniList, ...mangaDex];
+      } else {
+        results = await searchOpenLibrary(formData.title.trim() || term);
+      }
+      setCoverResults(results);
+      if (results.length === 0) {
+        setSearchFeedback(
+          "Nessuna copertina trovata. Prova un titolo diverso o incolla un URL.",
+        );
       }
     } catch (error) {
-      console.error("Metadata fetch failed:", error);
+      console.error("Cover search failed:", error);
+      setSearchFeedback("Ricerca non riuscita. Controlla la connessione.");
     } finally {
       setIsSearching(false);
     }
   };
 
+  const fetchMetadata = async (isbn: string) => {
+    const clean = isbn.replace(/[^0-9Xx]/g, "");
+    if (!clean) return;
+    setIsLookingUpIsbn(true);
+    setSearchFeedback(null);
+    try {
+      const meta = await lookupIsbn(clean);
+      if (meta) {
+        setFormData((prev) => ({
+          ...prev,
+          isbn: clean,
+          title: meta.title || prev.title,
+          author: meta.author || prev.author,
+          totalPages: meta.totalPages || prev.totalPages,
+          coverUrl: meta.coverUrl || prev.coverUrl,
+          description: meta.description || prev.description,
+          genre:
+            prev.genre ||
+            (meta.genre && BOOK_GENRES.includes(meta.genre) ? meta.genre : ""),
+        }));
+        setSearchFeedback(null);
+      } else {
+        setFormData((prev) => ({ ...prev, isbn: clean }));
+        setSearchFeedback(
+          `Nessun risultato per l'ISBN ${clean}. Puoi compilare i campi a mano.`,
+        );
+      }
+    } catch (error) {
+      console.error("Metadata fetch failed:", error);
+      setSearchFeedback("Ricerca ISBN non riuscita. Controlla la connessione.");
+    } finally {
+      setIsLookingUpIsbn(false);
+    }
+  };
+
+  const addTag = (raw: string) => {
+    const val = raw.trim();
+    if (!val) return;
+    if (!formData.tags.some((t) => t.toLowerCase() === val.toLowerCase())) {
+      update({ tags: [...formData.tags, val] });
+    }
+    setTagDraft("");
+  };
+
   const handleSave = () => {
-    if (!formData.title) return;
-    if (isBulkMode) {
+    if (!formData.title.trim()) return;
+    // Keep progress consistent: never more pages read than the book has.
+    const total = Number(formData.totalPages) || 0;
+    const read = Number(formData.pagesRead) || 0;
+    const base = {
+      ...formData,
+      tags: tagDraft.trim()
+        ? Array.from(new Set([...formData.tags, tagDraft.trim()]))
+        : formData.tags,
+      pagesRead: total > 0 && read > total ? total : formData.pagesRead,
+    };
+    if (isBulkMode && !isEditing) {
       const startVol = parseInt(formData.volumeNumber as string) || 1;
-      const count = Math.max(1, bulkCount);
+      const count = Math.min(300, Math.max(1, bulkCount));
       const itemsToSave = [];
       for (let i = 0; i < count; i++) {
         itemsToSave.push({
-          ...formData,
+          ...base,
+          seriesName: base.seriesName || base.title,
           volumeNumber: startVol + i,
           volumeCount: count,
-          coverUrl: i === 0 ? formData.coverUrl : "" // Only first gets the specific cover as requested
+          // Only the first volume gets the selected cover
+          coverUrl: i === 0 ? base.coverUrl : "",
         });
       }
       onSave(itemsToSave);
     } else {
-      onSave(formData);
+      onSave(base);
     }
     onClose();
   };
 
   if (!isOpen) return null;
 
+  const categoryOptions: {
+    id: Category;
+    label: string;
+    icon: typeof Book;
+    active: string;
+  }[] = [
+    { id: "book", label: "Libro", icon: Book, active: "bg-amber-900/40 border-amber-600 text-amber-300" },
+    { id: "manga", label: "Manga", icon: Sparkles, active: "bg-purple-900/40 border-purple-600 text-purple-300" },
+    { id: "gdr", label: "GDR", icon: Sword, active: "bg-red-900/40 border-red-600 text-red-300" },
+  ];
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md overflow-hidden"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey && formData.title) {
+        if (
+          (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ||
+          isPlainEnterSubmit(e)
+        ) {
+          e.preventDefault();
           handleSave();
         }
       }}
     >
       <motion.div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="item-modal-title"
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-4xl rounded-none sm:rounded-[2rem] p-4 sm:p-8 space-y-5 sm:space-y-6 overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
+        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl rounded-none sm:rounded-[2rem] shadow-2xl flex flex-col overflow-hidden"
       >
-        <div className="flex justify-between items-center">
-          <h2 className="text-xl font-serif font-bold text-white">
-            {initialData ? "Edit Treasure" : "New Treasure"}
-          </h2>
+        {/* Header */}
+        <div className="flex justify-between items-center px-4 sm:px-8 pt-4 sm:pt-6 pb-3 border-b border-white/5">
+          <div>
+            <h2 id="item-modal-title" className="text-xl font-serif font-bold text-white">
+              {isEditing
+                ? "Modifica tesoro"
+                : formData.isWishlist
+                  ? "Nuovo desiderio"
+                  : "Nuovo tesoro"}
+            </h2>
+            <p className="text-[10px] text-zinc-500 hidden sm:block">
+              Invio o Ctrl+Invio per salvare · Esc per chiudere
+            </p>
+          </div>
           <div className="flex items-center space-x-2">
             <button
+              type="button"
               onClick={() => setShowScanner(true)}
-              className="p-2 bg-white/5 border border-white/10 rounded-xl text-zinc-500 hover:text-white transition-all"
-              title="Scan ISBN"
+              className="flex items-center gap-1.5 px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-zinc-400 hover:text-white hover:bg-white/10 transition-all text-xs font-bold"
+              title="Scansiona ISBN"
             >
-              <Scan className="w-5 h-5" />
+              <Scan className="w-4 h-4" />
+              <span className="hidden sm:inline">Scansiona</span>
             </button>
             <button
+              type="button"
               onClick={onClose}
-              className="p-2 text-zinc-500 hover:text-white"
+              aria-label="Chiudi"
+              className="p-2 text-zinc-500 hover:text-white rounded-xl hover:bg-white/5"
             >
               <X className="w-5 h-5" />
             </button>
@@ -1009,121 +1324,165 @@ const ItemModal = ({
           />
         )}
 
-        <div className="space-y-4">
-          {!initialData && (
-            <div className="flex items-center justify-between p-3 bg-white/5 rounded-2xl border border-white/10">
-              <div className="flex items-center space-x-2">
-                <Layers className="w-4 h-4 text-purple-500" />
-                <span className="text-xs font-bold text-white uppercase tracking-widest">
-                  Bulk Add Mode
-                </span>
-              </div>
-              <button
-                onClick={() => setIsBulkMode(!isBulkMode)}
-                className={cn(
-                  "w-10 h-5 rounded-full transition-all relative",
-                  isBulkMode ? "bg-purple-600" : "bg-zinc-700",
-                )}
-              >
-                <div
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto no-scrollbar px-4 sm:px-8 py-5 space-y-5">
+          {/* Category */}
+          <div className="grid grid-cols-3 gap-2">
+            {categoryOptions.map((cat) => {
+              const CatIcon = cat.icon;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  aria-pressed={formData.category === cat.id}
+                  onClick={() => update({ category: cat.id })}
                   className={cn(
-                    "absolute top-1 w-3 h-3 bg-zinc-900 rounded-full transition-all",
-                    isBulkMode ? "right-1" : "left-1",
+                    "flex items-center justify-center gap-1.5 p-2.5 rounded-xl border transition-all text-[10px] font-bold uppercase tracking-widest",
+                    formData.category === cat.id
+                      ? cat.active
+                      : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10 hover:text-zinc-300",
                   )}
-                />
-              </button>
-            </div>
-          )}
+                >
+                  <CatIcon className="w-3.5 h-3.5" />
+                  {cat.label}
+                </button>
+              );
+            })}
+          </div>
 
-          {isBulkMode && (
-            <div className="grid grid-cols-1 gap-4 p-4 bg-purple-900/10 rounded-2xl border border-purple-500/20">
-              <div className="space-y-1">
-                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                  Number of Volumes to Create
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="300"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none"
-                  value={bulkCount}
-                  onChange={(e) => setBulkCount(parseInt(e.target.value) || 1)}
-                />
-              </div>
-              <p className="col-span-1 text-[10px] text-purple-400 italic text-center">
-                This will create {bulkCount} volumes automatically, starting from volume {formData.volumeNumber || 1}.
-              </p>
-            </div>
-          )}
-
-          <div className="flex flex-row space-x-4 items-start">
-            <div className="w-20 h-28 flex-shrink-0 bg-black/40 rounded-xl overflow-hidden border border-white/10">
-              {formData.coverUrl ? (
-                <img
-                  src={formData.coverUrl}
-                  className="w-full h-full object-contain"
-                  alt="Preview"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-zinc-700">
-                  <Book className="w-6 h-6" />
-                </div>
+          {/* Cover + title/author */}
+          <div className="flex flex-row gap-4 items-start">
+            <div className="w-24 h-36 flex-shrink-0 bg-black/40 rounded-xl overflow-hidden border border-white/10 relative">
+              <BookCover
+                title={formData.title || "Senza titolo"}
+                author={formData.author}
+                category={formData.category}
+                system={formData.system}
+                volumeNumber={formData.volumeNumber || undefined}
+                coverUrl={formData.coverUrl}
+                size="md"
+              />
+              {formData.coverUrl && (
+                <button
+                  type="button"
+                  onClick={() => update({ coverUrl: "" })}
+                  className="absolute top-1 right-1 z-30 p-1 bg-black/70 rounded-full text-zinc-300 hover:text-white"
+                  aria-label="Rimuovi copertina"
+                  title="Rimuovi copertina"
+                >
+                  <X className="w-3 h-3" />
+                </button>
               )}
             </div>
-            <div className="flex-1 space-y-2">
+            <div className="flex-1 min-w-0 space-y-3">
               <div className="space-y-1">
-                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                  Title
-                </label>
+                <FieldLabel htmlFor="item-title">Titolo *</FieldLabel>
                 <input
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
-                  placeholder="Title..."
+                  id="item-title"
+                  autoFocus={!isEditing}
+                  className={inputClass}
+                  placeholder="Titolo..."
                   value={formData.title}
-                  onChange={(e) =>
-                    setFormData({ ...formData, title: e.target.value })
-                  }
+                  onChange={(e) => update({ title: e.target.value })}
                 />
               </div>
+              <div className="space-y-1">
+                <FieldLabel htmlFor="item-author">
+                  {formData.category === "gdr" ? "Editore / Autore" : "Autore"}
+                </FieldLabel>
+                <input
+                  id="item-author"
+                  className={inputClass}
+                  placeholder="Autore..."
+                  list="authors-list"
+                  value={formData.author}
+                  onChange={(e) => update({ author: e.target.value })}
+                />
+                <datalist id="authors-list">
+                  {suggestions.authors.map((author) => (
+                    <option key={author} value={author} />
+                  ))}
+                </datalist>
+              </div>
               <button
+                type="button"
                 onClick={searchCovers}
-                disabled={!formData.title || isSearching}
-                className="text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors flex items-center space-x-1"
+                disabled={!formData.title.trim() || isSearching}
+                className="text-[11px] font-bold text-blue-400 hover:text-blue-300 disabled:text-zinc-600 transition-colors flex items-center gap-1.5"
               >
-                <Search className="w-3 h-3" />
-                <span>{isSearching ? "Searching..." : "Search Covers"}</span>
+                {isSearching ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {isSearching
+                    ? "Cerco copertine..."
+                    : formData.category === "manga"
+                      ? "Cerca copertina su AniList / MangaDex"
+                      : "Cerca copertina su Open Library"}
+                </span>
               </button>
             </div>
           </div>
 
+          {duplicate && (
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-xs">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Hai già <strong>"{duplicate.title}"</strong>
+                {getVolume(duplicate) !== undefined && ` (Vol. ${getVolume(duplicate)})`}
+                {duplicate.isWishlist ? " nella wishlist." : " nella libreria."}
+              </span>
+            </div>
+          )}
+
+          {searchFeedback && (
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-white/5 border border-white/10 text-zinc-300 text-xs">
+              <Info className="w-4 h-4 shrink-0 mt-0.5 text-blue-400" />
+              <span>{searchFeedback}</span>
+            </div>
+          )}
+
           {coverResults.length > 0 && (
             <div className="space-y-2">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                Select Cover
-              </label>
-              <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+              <div className="flex items-center justify-between">
+                <FieldLabel>Scegli una copertina</FieldLabel>
+                <button
+                  type="button"
+                  onClick={() => setCoverResults([])}
+                  className="text-[10px] text-zinc-500 hover:text-white"
+                >
+                  Chiudi
+                </button>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
                 {coverResults.map((res, i) => (
                   <button
-                    key={i}
+                    key={`${res.coverUrl}-${i}`}
+                    type="button"
                     onClick={() => {
-                      setFormData({
-                        ...formData,
+                      setFormData((prev) => ({
+                        ...prev,
                         coverUrl: res.coverUrl,
-                        author: res.author || formData.author,
-                        description: res.description || formData.description,
-                      });
+                        author: prev.author || res.author || "",
+                        description: prev.description || res.description || "",
+                        totalPages: prev.totalPages || res.totalPages || "",
+                      }));
                       setCoverResults([]);
                     }}
-                    className="relative flex-shrink-0 w-20 h-28 rounded-lg overflow-hidden border-2 border-transparent hover:border-blue-500 transition-all"
+                    className="relative flex-shrink-0 w-20 h-28 rounded-lg overflow-hidden border-2 border-transparent hover:border-blue-500 focus-visible:border-blue-500 transition-all bg-black/40"
+                    title={`${res.title}${res.author ? ` — ${res.author}` : ""}`}
                   >
                     <img
                       src={res.coverUrl}
                       className="w-full h-full object-cover"
-                      alt="Result"
+                      alt={res.title}
+                      loading="lazy"
                       referrerPolicy="no-referrer"
                     />
-                    <div className="absolute inset-0 bg-white/5 flex items-end p-1">
-                      <span className="text-[7px] text-white font-bold truncate">
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent p-1">
+                      <span className="block text-[7px] text-white font-bold truncate">
                         {res.source}
                       </span>
                     </div>
@@ -1133,137 +1492,145 @@ const ItemModal = ({
             </div>
           )}
 
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Series Name (Optional)
-            </label>
-            <input
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
-              placeholder="e.g. One Piece, Harry Potter..."
-              value={formData.seriesName}
-              onChange={(e) =>
-                setFormData({ ...formData, seriesName: e.target.value })
-              }
-            />
+          {/* Series & volume */}
+          <div className="grid grid-cols-[1fr_auto] gap-3">
+            <div className="space-y-1">
+              <FieldLabel htmlFor="item-series">Serie (opzionale)</FieldLabel>
+              <input
+                id="item-series"
+                className={inputClass}
+                placeholder="es. One Piece, Harry Potter..."
+                list="series-list"
+                value={formData.seriesName}
+                onChange={(e) => update({ seriesName: e.target.value })}
+              />
+              <datalist id="series-list">
+                {suggestions.series.map((s) => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
+            </div>
+            <div className="space-y-1 w-24">
+              <FieldLabel htmlFor="item-volume">
+                {isBulkMode ? "Dal vol." : "Volume #"}
+              </FieldLabel>
+              <input
+                id="item-volume"
+                type="number"
+                min="1"
+                inputMode="numeric"
+                className={inputClass}
+                placeholder="—"
+                value={formData.volumeNumber}
+                onChange={(e) =>
+                  update({
+                    volumeNumber:
+                      e.target.value === "" ? "" : parseInt(e.target.value),
+                  })
+                }
+              />
+            </div>
           </div>
 
-          <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+          {!isEditing && (
+            <div className="rounded-2xl border border-white/10 bg-white/5">
+              <div className="flex items-center justify-between p-3">
+                <div className="flex items-center gap-2.5">
+                  <Layers className="w-4 h-4 text-purple-400" />
+                  <div>
+                    <p className="text-xs font-bold text-white">Aggiunta multipla</p>
+                    <p className="text-[10px] text-zinc-500">
+                      Crea più volumi della stessa serie in un colpo
+                    </p>
+                  </div>
+                </div>
+                <ToggleSwitch
+                  checked={isBulkMode}
+                  onChange={setIsBulkMode}
+                  activeClass="bg-purple-600"
+                  label="Aggiunta multipla"
+                />
+              </div>
+              {isBulkMode && (
+                <div className="px-3 pb-3 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <FieldLabel htmlFor="bulk-count">Quanti volumi</FieldLabel>
+                    <input
+                      id="bulk-count"
+                      type="number"
+                      min="1"
+                      max="300"
+                      className={cn(inputClass, "w-24")}
+                      value={bulkCount}
+                      onChange={(e) =>
+                        setBulkCount(
+                          Math.min(300, Math.max(1, parseInt(e.target.value) || 1)),
+                        )
+                      }
+                    />
+                  </div>
+                  <p className="text-[11px] text-purple-300">
+                    Verranno creati i volumi da{" "}
+                    <strong>{Number(formData.volumeNumber) || 1}</strong> a{" "}
+                    <strong>
+                      {(Number(formData.volumeNumber) || 1) + bulkCount - 1}
+                    </strong>
+                    {formData.seriesName || formData.title
+                      ? ` della serie "${formData.seriesName || formData.title}".`
+                      : "."}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Wishlist */}
+          <div className="flex items-center justify-between p-3 bg-white/5 rounded-2xl border border-white/10">
             <div className="flex items-center space-x-3">
               <Heart
                 className={cn(
                   "w-5 h-5",
-                  formData.isWishlist
-                    ? "text-red-500 fill-red-500"
-                    : "text-zinc-500",
+                  formData.isWishlist ? "text-rose-500 fill-rose-500" : "text-zinc-500",
                 )}
               />
               <div>
-                <p className="text-xs font-bold text-white">Add to Wishlist</p>
+                <p className="text-xs font-bold text-white">Nella wishlist</p>
                 <p className="text-[10px] text-zinc-500">
-                  Items you want to buy later
+                  Non lo possiedi ancora, vuoi comprarlo
                 </p>
               </div>
             </div>
-            <button
-              onClick={() =>
-                setFormData({ ...formData, isWishlist: !formData.isWishlist })
-              }
-              className={cn(
-                "w-10 h-5 rounded-full transition-all relative",
-                formData.isWishlist ? "bg-red-600" : "bg-zinc-700",
-              )}
-            >
-              <div
-                className={cn(
-                  "absolute top-1 w-3 h-3 bg-zinc-900 rounded-full transition-all",
-                  formData.isWishlist ? "left-6" : "left-1",
-                )}
-              />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                Pages Read
-              </label>
-              <input
-                type="number"
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
-                placeholder="0"
-                value={formData.pagesRead}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    pagesRead:
-                      e.target.value === "" ? "" : parseInt(e.target.value),
-                  })
-                }
-              />
-            </div>
-            <div className="space-y-1">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                Total Pages
-              </label>
-              <input
-                type="number"
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
-                placeholder="0"
-                value={formData.totalPages}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    totalPages:
-                      e.target.value === "" ? "" : parseInt(e.target.value),
-                  })
-                }
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Purchase Cost (€)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
-              placeholder="0.00"
-              value={formData.price}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  price:
-                    e.target.value === "" ? "" : parseFloat(e.target.value),
-                })
-              }
+            <ToggleSwitch
+              checked={formData.isWishlist}
+              onChange={(v) => update({ isWishlist: v })}
+              activeClass="bg-rose-600"
+              label="Nella wishlist"
             />
           </div>
 
+          {/* Status */}
           <div className="space-y-2">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Status
-            </label>
-            <div className="flex flex-col sm:flex-row gap-2 sm:gap-2">
+            <FieldLabel>Stato lettura</FieldLabel>
+            <div className="grid grid-cols-3 gap-2">
               {[
-                { id: "unread", label: "To Read" },
-                { id: "reading", label: "Reading" },
-                { id: "read", label: "Finished" },
+                { id: "unread", label: "Da leggere" },
+                { id: "reading", label: "In lettura" },
+                { id: "read", label: "Finito" },
               ].map((s) => (
                 <button
                   key={s.id}
                   type="button"
+                  aria-pressed={formData.status === s.id}
                   onClick={() => {
                     const newStatus = s.id as Status;
                     const updates: any = { status: newStatus };
                     if (newStatus === "read" && formData.totalPages) {
                       updates.pagesRead = formData.totalPages;
                     }
-                    setFormData({ ...formData, ...updates });
+                    update(updates);
                   }}
                   className={cn(
-                    "flex-1 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-all",
+                    "py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest border transition-all",
                     formData.status === s.id
                       ? "bg-white text-zinc-900 border-white/30"
                       : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10",
@@ -1275,323 +1642,407 @@ const ItemModal = ({
             </div>
           </div>
 
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Cover URL (Manual Fallback)
-            </label>
-            <input
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500"
-              placeholder="Paste image URL here..."
-              value={formData.coverUrl}
-              onChange={(e) =>
-                setFormData({ ...formData, coverUrl: e.target.value })
-              }
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Author / Publisher
-            </label>
-            <div className="relative">
+          {/* Pages */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <FieldLabel htmlFor="item-pages-read">Pagine lette</FieldLabel>
               <input
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
-                placeholder="Author..."
-                list="authors-list"
-                value={formData.author}
+                id="item-pages-read"
+                type="number"
+                min="0"
+                inputMode="numeric"
+                className={inputClass}
+                placeholder="0"
+                value={formData.pagesRead}
+                onChange={(e) => {
+                  const v = e.target.value === "" ? "" : Math.max(0, parseInt(e.target.value));
+                  const patch: any = { pagesRead: v };
+                  if (typeof v === "number" && v > 0 && formData.status === "unread") {
+                    patch.status = "reading";
+                  }
+                  update(patch);
+                }}
+              />
+            </div>
+            <div className="space-y-1">
+              <FieldLabel htmlFor="item-pages-total">Pagine totali</FieldLabel>
+              <input
+                id="item-pages-total"
+                type="number"
+                min="0"
+                inputMode="numeric"
+                className={inputClass}
+                placeholder="0"
+                value={formData.totalPages}
                 onChange={(e) =>
-                  setFormData({ ...formData, author: e.target.value })
+                  update({
+                    totalPages:
+                      e.target.value === "" ? "" : Math.max(0, parseInt(e.target.value)),
+                  })
                 }
               />
-              <datalist id="authors-list">
-                {Array.from(new Set(existingAuthors))
-                  .sort()
-                  .map((author) => (
-                    <option key={author} value={author} />
-                  ))}
-              </datalist>
             </div>
           </div>
 
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Plot / Description
-            </label>
-            <textarea
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[90px] resize-none"
-              placeholder="Enter plot summary or description..."
-              value={formData.description}
-              onChange={(e) =>
-                setFormData({ ...formData, description: e.target.value })
-              }
-            />
-          </div>
+          {/* Category specific */}
+          {formData.category === "book" && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <FieldLabel>Genere</FieldLabel>
+                <div className="flex flex-wrap gap-2">
+                  {BOOK_GENRES.map((g) => (
+                    <button
+                      key={g}
+                      type="button"
+                      aria-pressed={formData.genre === g}
+                      onClick={() => update({ genre: formData.genre === g ? "" : g })}
+                      className={cn(
+                        "px-3 py-1.5 rounded-full text-xs font-medium border transition-all",
+                        formData.genre === g
+                          ? "bg-white text-zinc-900 border-white/30"
+                          : "bg-white/5 border-white/10 text-zinc-400 hover:bg-white/10",
+                      )}
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-[var(--color-brand-orange)] font-bold flex items-center gap-1">
-              <Edit3 className="w-3 h-3" />
-              <span>Personal Notes (Optional)</span>
-            </label>
-            <textarea
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-[var(--color-brand-orange)] placeholder:text-zinc-500 min-h-[80px] resize-none"
-              placeholder="Notes on edition, reading thoughts, quotes, personal bookmarks..."
-              value={formData.notes}
-              onChange={(e) =>
-                setFormData({ ...formData, notes: e.target.value })
-              }
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Custom Tags / Collections
-            </label>
-            <div className="relative">
+          {formData.category === "gdr" && (
+            <div className="space-y-1">
+              <FieldLabel htmlFor="item-system">Edizione / Sistema</FieldLabel>
               <input
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
-                placeholder="Type and press Enter to add..."
+                id="item-system"
+                className={inputClass}
+                placeholder="D&D 5e, Pathfinder 2e, Cyberpunk RED..."
+                list="systems-list"
+                value={formData.system}
+                onChange={(e) => update({ system: e.target.value })}
+              />
+              <datalist id="systems-list">
+                {suggestions.systems.map((s) => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
+            </div>
+          )}
+
+          <div className="space-y-1">
+            <FieldLabel htmlFor="item-isbn">ISBN</FieldLabel>
+            <div className="flex gap-2">
+              <input
+                id="item-isbn"
+                inputMode="numeric"
+                className={cn(inputClass, "font-mono")}
+                placeholder="978..."
+                value={formData.isbn}
+                data-enter-handled="true"
+                onChange={(e) => update({ isbn: e.target.value })}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    const val = e.currentTarget.value.trim();
-                    if (val && !(formData.tags || []).includes(val)) {
-                      setFormData({
-                        ...formData,
-                        tags: [...(formData.tags || []), val],
-                      });
-                      e.currentTarget.value = "";
-                    }
+                    fetchMetadata(formData.isbn);
                   }
                 }}
               />
-              <div className="flex flex-wrap gap-2 mt-2">
-                {(formData.tags || []).map((tag) => (
-                  <span
-                    key={tag}
-                    className="bg-white/10 text-white text-xs px-2 py-1 rounded-md flex items-center gap-1"
-                  >
-                    {tag}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFormData({
-                          ...formData,
-                          tags: (formData.tags || []).filter((t) => t !== tag),
-                        })
-                      }
-                      className="hover:text-red-400"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-4 pt-4 border-t border-white/10">
-            <div className="flex items-center justify-between">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                My Rating
-              </label>
-              <StarRating
-                rating={formData.rating}
-                setRating={(r) => setFormData({ ...formData, rating: r })}
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                Reader's Diary / Review
-              </label>
-              <textarea
-                className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 placeholder:text-zinc-500 min-h-[80px] resize-none"
-                placeholder="What did you think? Notes after reading..."
-                value={formData.review}
-                onChange={(e) =>
-                  setFormData({ ...formData, review: e.target.value })
-                }
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2">
-            {(["book", "manga", "gdr"] as Category[]).map((cat) => (
               <button
-                key={cat}
-                onClick={() => setFormData({ ...formData, category: cat })}
-                className={cn(
-                  "flex-1 p-2.5 rounded-xl border transition-all text-[9px] font-bold uppercase tracking-widest",
-                  formData.category === cat
-                    ? cat === "gdr"
-                      ? "bg-red-900/40 border-red-700 text-red-400"
-                      : cat === "manga"
-                        ? "bg-purple-900/40 border-purple-700 text-purple-400"
-                        : "bg-amber-900/40 border-amber-700 text-amber-400"
-                    : "bg-white/5 border-white/10 text-zinc-500",
-                )}
+                type="button"
+                onClick={() => fetchMetadata(formData.isbn)}
+                disabled={
+                  isLookingUpIsbn ||
+                  formData.isbn.replace(/[^0-9Xx]/g, "").length < 10
+                }
+                className="px-3 bg-white/10 hover:bg-white/15 disabled:opacity-40 text-white text-[10px] font-bold uppercase tracking-widest rounded-xl flex items-center gap-1.5 shrink-0"
+                title="Compila automaticamente dai dati ISBN"
               >
-                {cat === "gdr" ? "RPG" : cat}
+                {isLookingUpIsbn ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Search className="w-3.5 h-3.5" />
+                )}
+                <span>Compila</span>
               </button>
-            ))}
+            </div>
           </div>
 
-          {/* Conditional Fields */}
-          <AnimatePresence mode="wait">
-            {formData.category === "book" && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="space-y-4"
-              >
-                <div className="space-y-2">
-                  <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
-                    Select Genre
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {[
-                      "Horror",
-                      "Poetry",
-                      "Cookbook",
-                      "Novel",
-                      "Thriller",
-                      "Fantasy",
-                      "Sci-Fi",
-                      "Biography",
-                      "History",
-                      "Other",
-                    ].map((g) => (
-                      <button
-                        key={g}
-                        type="button"
-                        onClick={() => setFormData({ ...formData, genre: g })}
-                        className={cn(
-                          "px-3 py-2 rounded-xl text-xs font-medium border transition-all text-left",
-                          formData.genre === g
-                            ? "bg-white text-zinc-900 border-white/30"
-                            : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10",
-                        )}
-                      >
-                        {g}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+          <div className="space-y-1">
+            <FieldLabel htmlFor="item-description">Trama / Descrizione</FieldLabel>
+            <textarea
+              id="item-description"
+              className={cn(inputClass, "p-3 min-h-[90px] resize-y")}
+              placeholder="Trama o descrizione..."
+              value={formData.description}
+              onChange={(e) => update({ description: e.target.value })}
+            />
+          </div>
+
+          {/* Advanced */}
+          <button
+            type="button"
+            onClick={() => setShowMore((v) => !v)}
+            aria-expanded={showMore}
+            className="w-full flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 text-xs font-bold text-zinc-300 hover:bg-white/10 transition-colors"
+          >
+            <span>Prezzo, tag, voto, note e recensione</span>
+            <ChevronRight
+              className={cn("w-4 h-4 transition-transform", showMore && "rotate-90")}
+            />
+          </button>
+
+          {showMore && (
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
-                    ISBN
-                  </label>
+                  <FieldLabel htmlFor="item-price">Prezzo d'acquisto (€)</FieldLabel>
                   <input
-                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
-                    placeholder="ISBN-13..."
-                    value={formData.isbn}
+                    id="item-price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    inputMode="decimal"
+                    className={inputClass}
+                    placeholder="0.00"
+                    value={formData.price}
                     onChange={(e) =>
-                      setFormData({ ...formData, isbn: e.target.value })
+                      update({
+                        price: e.target.value === "" ? "" : parseFloat(e.target.value),
+                      })
                     }
                   />
                 </div>
-              </motion.div>
-            )}
-            {formData.category === "manga" && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="space-y-1"
-              >
-                <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
-                  Volume Number
-                </label>
+                <div className="space-y-1">
+                  <FieldLabel>Il mio voto</FieldLabel>
+                  <div className="h-[42px] flex items-center">
+                    <StarRating
+                      rating={formData.rating}
+                      setRating={(r) => update({ rating: r })}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <FieldLabel htmlFor="item-tags">Tag / Collezioni</FieldLabel>
                 <input
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
-                  placeholder="e.g. 1"
-                  value={formData.totalVolumes}
-                  onChange={(e) =>
-                    setFormData({ ...formData, totalVolumes: e.target.value })
-                  }
+                  id="item-tags"
+                  className={inputClass}
+                  placeholder="Scrivi e premi Invio o virgola..."
+                  list="tags-list"
+                  value={tagDraft}
+                  data-enter-handled="true"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v.endsWith(",")) addTag(v.slice(0, -1));
+                    else setTagDraft(v);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addTag(tagDraft);
+                    } else if (e.key === "Backspace" && !tagDraft && formData.tags.length) {
+                      update({ tags: formData.tags.slice(0, -1) });
+                    }
+                  }}
                 />
-              </motion.div>
-            )}
-            {formData.category === "gdr" && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="space-y-1"
-              >
-                <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
-                  Edition / System
+                <datalist id="tags-list">
+                  {suggestions.tags
+                    .filter((t) => !formData.tags.includes(t))
+                    .map((t) => (
+                      <option key={t} value={t} />
+                    ))}
+                </datalist>
+                {formData.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {formData.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="bg-white/10 text-white text-xs pl-2 pr-1 py-1 rounded-md flex items-center gap-1"
+                      >
+                        {tag}
+                        <button
+                          type="button"
+                          aria-label={`Rimuovi tag ${tag}`}
+                          onClick={() =>
+                            update({ tags: formData.tags.filter((t) => t !== tag) })
+                          }
+                          className="p-0.5 rounded hover:text-red-400 hover:bg-white/10"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <label
+                  htmlFor="item-notes"
+                  className="text-[9px] uppercase tracking-widest text-[var(--color-brand-orange)] font-bold flex items-center gap-1"
+                >
+                  <Edit3 className="w-3 h-3" />
+                  <span>Note personali</span>
                 </label>
-                <input
-                  className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
-                  placeholder="D&D 5e, Pathfinder 2e, Cyberpunk RED..."
-                  value={formData.system}
-                  onChange={(e) =>
-                    setFormData({ ...formData, system: e.target.value })
-                  }
+                <textarea
+                  id="item-notes"
+                  className={cn(inputClass, "p-3 min-h-[80px] resize-y focus:border-[var(--color-brand-orange)]")}
+                  placeholder="Edizione, citazioni, segnalibri..."
+                  value={formData.notes}
+                  onChange={(e) => update({ notes: e.target.value })}
                 />
-              </motion.div>
-            )}
-          </AnimatePresence>
+              </div>
+
+              <div className="space-y-1">
+                <FieldLabel htmlFor="item-review">Diario di lettura / Recensione</FieldLabel>
+                <textarea
+                  id="item-review"
+                  className={cn(inputClass, "p-3 min-h-[80px] resize-y")}
+                  placeholder="Cosa ne pensi?"
+                  value={formData.review}
+                  onChange={(e) => update({ review: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <FieldLabel htmlFor="item-cover-url">URL copertina (manuale)</FieldLabel>
+                <input
+                  id="item-cover-url"
+                  type="url"
+                  className={inputClass}
+                  placeholder="https://..."
+                  value={formData.coverUrl}
+                  onChange={(e) => update({ coverUrl: e.target.value })}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
-        <button
-          disabled={!formData.title}
-          onClick={handleSave}
-          className="w-full py-4 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-white/10 transition-all disabled:opacity-50"
-        >
-          {initialData
-            ? "Update Collection"
-            : isBulkMode
-              ? `Bulk Add ${bulkCount} Volumes`
-              : "Add to Collection"}
-        </button>
+        {/* Footer */}
+        <div className="px-4 sm:px-8 py-4 border-t border-white/5 bg-zinc-900 flex gap-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-3.5 bg-white/5 hover:bg-white/10 text-zinc-300 font-bold rounded-2xl transition-all"
+          >
+            Annulla
+          </button>
+          <button
+            type="button"
+            disabled={!formData.title.trim()}
+            onClick={handleSave}
+            className="flex-1 py-3.5 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-zinc-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {isEditing
+              ? "Salva modifiche"
+              : isBulkMode
+                ? `Aggiungi ${bulkCount} volumi`
+                : formData.isWishlist
+                  ? "Aggiungi alla wishlist"
+                  : "Aggiungi alla collezione"}
+          </button>
+        </div>
       </motion.div>
     </div>
   );
 };
 
-const Dashboard = ({ items }: { items: LibraryItem[] }) => {
-  const [filter, setFilter] = useState<string>("all");
+
+const CATEGORY_LABELS: Record<Category, string> = {
+  book: "Libri",
+  manga: "Manga",
+  gdr: "GDR",
+};
+const CATEGORY_COLORS: Record<string, string> = {
+  Libri: "#d97706",
+  Manga: "#9333ea",
+  GDR: "#dc2626",
+};
+const chartTooltipProps = {
+  contentStyle: {
+    backgroundColor: "#18181b",
+    border: "1px solid rgba(255,255,255,0.1)",
+    borderRadius: "12px",
+    fontSize: "12px",
+  },
+  itemStyle: { color: "#f4f4f5" },
+  labelStyle: { color: "#a1a1aa" },
+};
+
+const StatTile = ({
+  label,
+  value,
+  hint,
+  accent,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: React.ReactNode;
+  accent: string;
+}) => (
+  <div className={cn("glass-card p-4 sm:p-5 rounded-3xl border-l-4", accent)}>
+    <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
+      {label}
+    </p>
+    <p className="text-2xl sm:text-3xl font-serif font-bold text-white truncate">
+      {value}
+    </p>
+    {hint && <p className="text-[10px] text-zinc-500 mt-1 truncate">{hint}</p>}
+  </div>
+);
+
+const Dashboard = ({
+  items,
+  onOpenDetails,
+}: {
+  items: LibraryItem[];
+  onOpenDetails: (item: LibraryItem) => void;
+}) => {
+  const [filter, setFilter] = useState<"all" | Category>("all");
+  const [isChartMenuOpen, setIsChartMenuOpen] = useState(false);
   const [visibleCharts, setVisibleCharts] = useState({
     distribution: true,
     value: true,
   });
 
-  const filteredItems = useMemo(() => {
-    const collectionOnly = items.filter((i) => !i.isWishlist);
-    return filter === "all"
-      ? collectionOnly
-      : collectionOnly.filter((i) => i.category === filter);
-  }, [items, filter]);
+  const byCategory = (list: LibraryItem[]) =>
+    filter === "all" ? list : list.filter((i) => i.category === filter);
+
+  const filteredItems = useMemo(
+    () => byCategory(items.filter((i) => !i.isWishlist)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, filter],
+  );
+  const wishlistItems = useMemo(
+    () => byCategory(items.filter((i) => i.isWishlist)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, filter],
+  );
 
   const stats = useMemo(() => {
     const total = filteredItems.length;
     const read = filteredItems.filter((i) => i.status === "read").length;
     const reading = filteredItems.filter((i) => i.status === "reading").length;
     const unread = filteredItems.filter((i) => i.status === "unread").length;
-
-    const value = filteredItems.reduce(
-      (acc, curr) => acc + (curr.price || 0),
-      0,
-    );
-    const avgPrice = total > 0 ? value / total : 0;
-
-    const totalPages = filteredItems.reduce(
-      (acc, curr) => acc + (Number(curr.totalPages) || 0),
-      0,
-    );
+    const value = filteredItems.reduce((acc, curr) => acc + (Number(curr.price) || 0), 0);
+    const priced = filteredItems.filter((i) => Number(i.price) > 0).length;
+    const avgPrice = priced > 0 ? value / priced : 0;
+    const totalPages = filteredItems.reduce((acc, curr) => acc + (Number(curr.totalPages) || 0), 0);
     const pagesRead = filteredItems.reduce(
-      (acc, curr) => acc + (Number(curr.pagesRead) || 0),
+      (acc, curr) =>
+        acc + Math.min(Number(curr.pagesRead) || 0, Number(curr.totalPages) || Infinity),
       0,
     );
     const progressPercent = totalPages > 0 ? (pagesRead / totalPages) * 100 : 0;
-
-    const mangaCount = filteredItems.filter(
-      (i) => i.category === "manga",
-    ).length;
-
+    const loaned = filteredItems.filter((i) => i.loanedTo);
+    const wishlistValue = wishlistItems.reduce((acc, curr) => acc + (Number(curr.price) || 0), 0);
+    const rated = filteredItems.filter((i) => i.rating);
+    const avgRating = rated.length
+      ? rated.reduce((a, c) => a + (c.rating || 0), 0) / rated.length
+      : 0;
     return {
       total,
       read,
@@ -1602,40 +2053,38 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
       totalPages,
       pagesRead,
       progressPercent,
-      mangaCount,
+      loaned,
+      wishlistValue,
+      avgRating,
+      readPercent: total ? Math.round((read / total) * 100) : 0,
     };
-  }, [filteredItems]);
+  }, [filteredItems, wishlistItems]);
 
   const genreData = useMemo(() => {
     const counts: Record<string, number> = {};
     filteredItems.forEach((item) => {
-      if (item.genre) {
-        counts[item.genre] = (counts[item.genre] || 0) + 1;
-      }
+      const key = item.genre || (item.category === "gdr" ? item.system : "");
+      if (key) counts[key] = (counts[key] || 0) + 1;
     });
     return Object.entries(counts)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 5);
+      .slice(0, 6);
   }, [filteredItems]);
 
-  const statusData = useMemo(() => {
-    return [
-      { name: "To Read", value: stats.unread, color: "#71717a" },
-      { name: "Reading", value: stats.reading, color: "#60a5fa" },
-      { name: "Finished", value: stats.read, color: "#22c55e" },
-    ];
-  }, [stats]);
+  const statusData = useMemo(
+    () => [
+      { name: "Da leggere", value: stats.unread, color: "#71717a" },
+      { name: "In lettura", value: stats.reading, color: "#60a5fa" },
+      { name: "Finiti", value: stats.read, color: "#22c55e" },
+    ],
+    [stats],
+  );
 
   const categoryData = useMemo(() => {
     const counts: Record<string, number> = {};
     filteredItems.forEach((item) => {
-      const label =
-        item.category === "book"
-          ? "Books"
-          : item.category === "manga"
-            ? "Manga"
-            : "RPG";
+      const label = CATEGORY_LABELS[item.category] || "Libri";
       counts[label] = (counts[label] || 0) + 1;
     });
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
@@ -1644,134 +2093,142 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
   const valueData = useMemo(() => {
     const values: Record<string, number> = {};
     filteredItems.forEach((item) => {
-      const label =
-        item.category === "book"
-          ? "Books"
-          : item.category === "manga"
-            ? "Manga"
-            : "RPG";
-      values[label] = (values[label] || 0) + (item.price || 0);
+      const label = CATEGORY_LABELS[item.category] || "Libri";
+      values[label] = (values[label] || 0) + (Number(item.price) || 0);
     });
-    return Object.entries(values).map(([name, value]) => ({ name, value }));
+    return Object.entries(values).map(([name, value]) => ({
+      name,
+      value: Math.round(value * 100) / 100,
+    }));
   }, [filteredItems]);
 
-  const COLORS = ["#b45309", "#7e22ce", "#9b1c1c"];
+  const currentlyReading = useMemo(
+    () => filteredItems.filter((i) => i.status === "reading"),
+    [filteredItems],
+  );
+
+  const hasData = filteredItems.length > 0;
 
   return (
-    <div className="space-y-8 p-6 max-w-4xl mx-auto">
+    <div className="space-y-6 sm:space-y-8 p-4 sm:p-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h2 className="text-3xl font-serif font-bold text-white">Dashboard</h2>
-        <div className="flex items-center space-x-3 w-full sm:w-auto overflow-hidden">
-          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10 overflow-x-auto no-scrollbar">
+        <div>
+          <h2 className="text-3xl font-serif font-bold text-white">Statistiche</h2>
+          <p className="text-xs text-zinc-500 mt-1">
+            La tua collezione in numeri (wishlist esclusa)
+          </p>
+        </div>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10 overflow-x-auto no-scrollbar flex-1 sm:flex-none">
             {[
-              { id: "all", label: "All" },
-              { id: "book", label: "Books" },
+              { id: "all", label: "Tutto" },
+              { id: "book", label: "Libri" },
               { id: "manga", label: "Manga" },
-              { id: "gdr", label: "RPG" },
+              { id: "gdr", label: "GDR" },
             ].map((f) => (
               <button
                 key={f.id}
                 onClick={() => setFilter(f.id as any)}
+                aria-pressed={filter === f.id}
                 className={cn(
-                  "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
-                  filter === f.id
-                    ? "bg-white text-zinc-900"
-                    : "text-zinc-500 hover:text-white",
+                  "flex-1 sm:flex-none px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                  filter === f.id ? "bg-white text-zinc-900" : "text-zinc-500 hover:text-white",
                 )}
               >
                 {f.label}
               </button>
             ))}
           </div>
-          <div className="relative group">
-            <button className="p-2 bg-white/5 border border-white/10 rounded-xl text-zinc-500 hover:text-white transition-all">
+          <div className="relative">
+            <button
+              onClick={() => setIsChartMenuOpen((v) => !v)}
+              aria-expanded={isChartMenuOpen}
+              aria-label="Mostra/nascondi grafici"
+              className={cn(
+                "p-2 border rounded-xl transition-all",
+                isChartMenuOpen
+                  ? "bg-white/10 border-white/30 text-white"
+                  : "bg-white/5 border-white/10 text-zinc-500 hover:text-white",
+              )}
+            >
               <Filter className="w-5 h-5" />
             </button>
-            <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-white/10 rounded-2xl p-4 shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto transition-all z-50">
-              <p className="text-[10px] uppercase font-bold text-zinc-500 mb-3 tracking-widest">
-                Toggle Charts
-              </p>
-              <label className="flex items-center space-x-3 cursor-pointer mb-2">
-                <input
-                  type="checkbox"
-                  checked={visibleCharts.distribution}
-                  onChange={(e) =>
-                    setVisibleCharts({
-                      ...visibleCharts,
-                      distribution: e.target.checked,
-                    })
-                  }
-                  className="accent-amber-600"
-                />
-                <span className="text-xs text-zinc-300">Distribution</span>
-              </label>
-              <label className="flex items-center space-x-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={visibleCharts.value}
-                  onChange={(e) =>
-                    setVisibleCharts({
-                      ...visibleCharts,
-                      value: e.target.checked,
-                    })
-                  }
-                  className="accent-amber-600"
-                />
-                <span className="text-xs text-zinc-300">Economic Value</span>
-              </label>
-            </div>
+            {isChartMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setIsChartMenuOpen(false)} />
+                <div className="absolute right-0 mt-2 w-52 bg-zinc-900 border border-white/10 rounded-2xl p-4 shadow-2xl z-50">
+                  <p className="text-[10px] uppercase font-bold text-zinc-500 mb-3 tracking-widest">
+                    Grafici visibili
+                  </p>
+                  <label className="flex items-center space-x-3 cursor-pointer mb-2">
+                    <input
+                      type="checkbox"
+                      checked={visibleCharts.distribution}
+                      onChange={(e) =>
+                        setVisibleCharts({ ...visibleCharts, distribution: e.target.checked })
+                      }
+                      className="accent-amber-600"
+                    />
+                    <span className="text-xs text-zinc-300">Distribuzione categorie</span>
+                  </label>
+                  <label className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={visibleCharts.value}
+                      onChange={(e) =>
+                        setVisibleCharts({ ...visibleCharts, value: e.target.checked })
+                      }
+                      className="accent-amber-600"
+                    />
+                    <span className="text-xs text-zinc-300">Valore economico</span>
+                  </label>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="glass-card p-5 rounded-3xl border-l-4 border-amber-600">
-          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
-            Total Items
-          </p>
-          <p className="text-3xl font-serif font-bold text-white">
-            {stats.total}
-          </p>
-        </div>
-        <div className="glass-card p-5 rounded-3xl border-l-4 border-green-600">
-          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
-            Finished
-          </p>
-          <p className="text-3xl font-serif font-bold text-white">
-            {stats.read}
-          </p>
-        </div>
-        <div className="glass-card p-5 rounded-3xl border-l-4 border-blue-600">
-          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
-            Total Value
-          </p>
-          <p className="text-3xl font-serif font-bold text-white">
-            €{stats.value.toFixed(2)}
-          </p>
-        </div>
-        <div className="glass-card p-5 rounded-3xl border-l-4 border-purple-600">
-          <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
-            Avg. Price
-          </p>
-          <p className="text-3xl font-serif font-bold text-white">
-            €{stats.avgPrice.toFixed(2)}
-          </p>
-        </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <StatTile
+          label="Volumi"
+          value={stats.total}
+          hint={`${stats.reading} in lettura · ${stats.unread} da leggere`}
+          accent="border-amber-600"
+        />
+        <StatTile
+          label="Finiti"
+          value={stats.read}
+          hint={`${stats.readPercent}% della collezione`}
+          accent="border-green-600"
+        />
+        <StatTile
+          label="Valore"
+          value={formatPrice(stats.value)}
+          hint={stats.avgPrice ? `Media ${formatPrice(stats.avgPrice)}` : "Aggiungi i prezzi"}
+          accent="border-blue-600"
+        />
+        <StatTile
+          label="Wishlist"
+          value={wishlistItems.length}
+          hint={stats.wishlistValue ? `Budget ${formatPrice(stats.wishlistValue)}` : "desideri"}
+          accent="border-rose-600"
+        />
       </div>
 
-      {/* Reading Progress & Manga Count */}
+      {/* Reading progress */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="glass-card p-6 rounded-3xl space-y-4">
-          <div className="flex justify-between items-end">
-            <div>
+          <div className="flex justify-between items-end gap-4">
+            <div className="min-w-0">
               <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
-                Reading Progress
+                Pagine lette
               </p>
               <p className="text-2xl font-serif font-bold text-white">
                 {stats.pagesRead.toLocaleString()}{" "}
                 <span className="text-sm text-zinc-500 font-sans">
-                  / {stats.totalPages.toLocaleString()} pages
+                  / {stats.totalPages.toLocaleString()}
                 </span>
               </p>
             </div>
@@ -1790,734 +2247,789 @@ const Dashboard = ({ items }: { items: LibraryItem[] }) => {
         <div className="glass-card p-6 rounded-3xl flex items-center justify-between">
           <div>
             <p className="text-[9px] uppercase font-bold text-zinc-500 tracking-widest mb-1">
-              Manga Collected
+              Voto medio
             </p>
-            <p className="text-4xl font-serif font-bold text-white">
-              {stats.mangaCount}
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-4xl font-serif font-bold text-white">
+                {stats.avgRating ? stats.avgRating.toFixed(1) : "—"}
+              </p>
+              {stats.avgRating > 0 && (
+                <StarRating rating={Math.round(stats.avgRating)} readonly />
+              )}
+            </div>
           </div>
-          <div className="p-4 bg-purple-900/20 rounded-2xl">
-            <Sparkles className="w-8 h-8 text-purple-500" />
+          <div className="p-4 bg-amber-900/20 rounded-2xl">
+            <Sparkles className="w-8 h-8 text-amber-400" />
           </div>
         </div>
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {visibleCharts.distribution && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-card p-6 rounded-3xl h-[350px] flex flex-col"
-          >
-            <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">
-              Category Distribution
-            </h3>
-            <div className="flex-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={categoryData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {categoryData.map((entry) => (
-                      <Cell
-                        key={`cell-category-${entry.name}`}
-                        fill={
-                          COLORS[categoryData.indexOf(entry) % COLORS.length]
-                        }
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "#18181b",
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      borderRadius: "12px",
-                    }}
-                    itemStyle={{ color: "#fff" }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </motion.div>
-        )}
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass-card p-6 rounded-3xl h-[350px] flex flex-col"
-        >
-          <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">
-            Status Breakdown
-          </h3>
-          <div className="flex-1">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={statusData} layout="vertical">
-                <XAxis type="number" hide />
-                <YAxis
-                  dataKey="name"
-                  type="category"
-                  stroke="#52525b"
-                  fontSize={10}
-                  tickLine={false}
-                  axisLine={false}
-                  width={70}
-                />
-                <Tooltip
-                  cursor={{ fill: "transparent" }}
-                  contentStyle={{
-                    backgroundColor: "#18181b",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: "12px",
-                  }}
-                />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                  {statusData.map((entry) => (
-                    <Cell
-                      key={`cell-status-${entry.name}`}
-                      fill={entry.color}
+      {!hasData ? (
+        <div className="glass-card p-10 rounded-3xl text-center text-zinc-500 text-sm">
+          Nessun elemento in questa categoria: aggiungine qualcuno per vedere i grafici.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {visibleCharts.distribution && (
+            <div className="glass-card p-6 rounded-3xl h-[320px] flex flex-col">
+              <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest">
+                Distribuzione categorie
+              </h3>
+              <div className="flex-1">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={categoryData}
+                      cx="50%"
+                      cy="45%"
+                      innerRadius={55}
+                      outerRadius={80}
+                      paddingAngle={4}
+                      dataKey="value"
+                      stroke="none"
+                    >
+                      {categoryData.map((entry) => (
+                        <Cell
+                          key={`cell-category-${entry.name}`}
+                          fill={CATEGORY_COLORS[entry.name] || "#71717a"}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip {...chartTooltipProps} />
+                    <Legend
+                      iconType="circle"
+                      iconSize={8}
+                      wrapperStyle={{ fontSize: 11, color: "#a1a1aa" }}
                     />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </motion.div>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
 
-        {visibleCharts.value && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="glass-card p-6 rounded-3xl h-[350px] flex flex-col"
-          >
-            <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">
-              Value by Category
+          <div className="glass-card p-6 rounded-3xl h-[320px] flex flex-col">
+            <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest">
+              Stato di lettura
             </h3>
             <div className="flex-1">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={valueData}>
-                  <XAxis
-                    dataKey="name"
-                    stroke="#52525b"
-                    fontSize={10}
-                    tickLine={false}
-                    axisLine={false}
-                  />
+                <BarChart data={statusData} layout="vertical">
+                  <XAxis type="number" hide allowDecimals={false} />
                   <YAxis
-                    stroke="#52525b"
+                    dataKey="name"
+                    type="category"
+                    stroke="#71717a"
                     fontSize={10}
                     tickLine={false}
                     axisLine={false}
+                    width={74}
                   />
-                  <Tooltip
-                    cursor={{ fill: "rgba(255,255,255,0.05)" }}
-                    contentStyle={{
-                      backgroundColor: "#18181b",
-                      border: "1px solid rgba(255,255,255,0.1)",
-                      borderRadius: "12px",
-                    }}
-                  />
-                  <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} {...chartTooltipProps} />
+                  <Bar dataKey="value" name="Volumi" radius={[0, 4, 4, 0]}>
+                    {statusData.map((entry) => (
+                      <Cell key={`cell-status-${entry.name}`} fill={entry.color} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>
-          </motion.div>
-        )}
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass-card p-6 rounded-3xl h-[350px] flex flex-col lg:col-span-2"
-        >
-          <h3 className="text-[10px] font-bold text-zinc-500 mb-6 uppercase tracking-widest">
-            Top Genres
-          </h3>
-          <div className="flex-1">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={genreData}>
-                <XAxis
-                  dataKey="name"
-                  stroke="#52525b"
-                  fontSize={10}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis
-                  stroke="#52525b"
-                  fontSize={10}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <Tooltip
-                  cursor={{ fill: "rgba(255,255,255,0.05)" }}
-                  contentStyle={{
-                    backgroundColor: "#18181b",
-                    border: "1px solid rgba(255,255,255,0.1)",
-                    borderRadius: "12px",
-                  }}
-                />
-                <Bar dataKey="value" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
           </div>
-        </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="glass-card p-6 rounded-3xl h-[350px] flex flex-col overflow-hidden"
-        >
-          <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest">
-            Currently Reading
-          </h3>
-          <div className="flex-1 overflow-y-auto no-scrollbar space-y-3">
-            {items.filter((i) => i.status === "reading").length > 0 ? (
-              items
-                .filter((i) => i.status === "reading")
-                .map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center space-x-3 p-2 bg-white/5 rounded-xl border border-white/10"
-                  >
-                    <div className="w-10 h-14 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0 border border-white/10 shadow-sm relative">
-                      <BookCover
-                        title={item.title}
-                        author={item.author}
-                        category={item.category}
-                        coverUrl={item.coverUrl}
-                        size="sm"
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-bold text-white truncate">
-                        {item.title}
-                      </p>
-                      <p className="text-[10px] text-zinc-500 truncate">
-                        {item.author}
-                      </p>
-                      <div className="mt-1 w-full bg-white/10 h-1 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-blue-500"
-                          style={{
-                            width: `${item.totalPages ? (Number(item.pagesRead) / Number(item.totalPages)) * 100 : 0}%`,
-                          }}
+          {visibleCharts.value && (
+            <div className="glass-card p-6 rounded-3xl h-[320px] flex flex-col">
+              <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest">
+                Valore per categoria
+              </h3>
+              <div className="flex-1">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={valueData}>
+                    <XAxis dataKey="name" stroke="#71717a" fontSize={10} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#71717a" fontSize={10} tickLine={false} axisLine={false} width={40} />
+                    <Tooltip
+                      cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                      formatter={(v: any) => [formatPrice(v), "Valore"]}
+                      {...chartTooltipProps}
+                    />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                      {valueData.map((entry) => (
+                        <Cell key={`cell-value-${entry.name}`} fill={CATEGORY_COLORS[entry.name] || "#3b82f6"} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {genreData.length > 0 && (
+            <div className="glass-card p-6 rounded-3xl h-[320px] flex flex-col lg:col-span-2">
+              <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest">
+                Generi / sistemi preferiti
+              </h3>
+              <div className="flex-1">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={genreData}>
+                    <XAxis dataKey="name" stroke="#71717a" fontSize={10} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#71717a" fontSize={10} tickLine={false} axisLine={false} allowDecimals={false} width={30} />
+                    <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }} {...chartTooltipProps} />
+                    <Bar dataKey="value" name="Volumi" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          <div className="glass-card p-6 rounded-3xl h-[320px] flex flex-col overflow-hidden">
+            <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest">
+              Sul comodino ({currentlyReading.length})
+            </h3>
+            <div className="flex-1 overflow-y-auto no-scrollbar space-y-2">
+              {currentlyReading.length > 0 ? (
+                currentlyReading.map((item) => {
+                  const pct = item.totalPages
+                    ? Math.min(100, ((Number(item.pagesRead) || 0) / Number(item.totalPages)) * 100)
+                    : 0;
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => onOpenDetails(item)}
+                      className="w-full text-left flex items-center space-x-3 p-2 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-colors"
+                    >
+                      <div className="w-10 h-14 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0 border border-white/10 shadow-sm relative">
+                        <BookCover
+                          title={item.title}
+                          author={item.author}
+                          category={item.category}
+                          coverUrl={item.coverUrl}
+                          size="sm"
                         />
                       </div>
-                    </div>
-                  </div>
-                ))
-            ) : (
-              <p className="text-xs text-zinc-500 text-center py-10 italic">
-                Nothing on the desk right now.
-              </p>
-            )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-white truncate">{item.title}</p>
+                        <p className="text-[10px] text-zinc-500 truncate">
+                          {item.author}
+                          {item.totalPages ? ` · ${Math.round(pct)}%` : ""}
+                        </p>
+                        <div className="mt-1 w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                          <div className="h-full bg-blue-500" style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="text-xs text-zinc-500 text-center py-10 italic">
+                  Niente sul comodino al momento.
+                </p>
+              )}
+            </div>
           </div>
-        </motion.div>
-      </div>
+
+          <div className="glass-card p-6 rounded-3xl h-[320px] flex flex-col overflow-hidden">
+            <h3 className="text-[10px] font-bold text-zinc-500 mb-4 uppercase tracking-widest flex items-center gap-1.5">
+              <Handshake className="w-3.5 h-3.5" /> In prestito ({stats.loaned.length})
+            </h3>
+            <div className="flex-1 overflow-y-auto no-scrollbar space-y-2">
+              {stats.loaned.length > 0 ? (
+                [...stats.loaned]
+                  .sort((a, b) => (daysSince(b.loanDate) ?? 0) - (daysSince(a.loanDate) ?? 0))
+                  .map((item) => {
+                    const days = daysSince(item.loanDate);
+                    const overdue = days !== null && days > 30;
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => onOpenDetails(item)}
+                        className="w-full text-left flex items-center justify-between gap-3 p-3 bg-white/5 hover:bg-white/10 rounded-xl border border-white/10 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white truncate">{item.title}</p>
+                          <p className="text-[10px] text-amber-400 truncate">{item.loanedTo}</p>
+                        </div>
+                        {days !== null && (
+                          <span
+                            className={cn(
+                              "text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0",
+                              overdue ? "bg-red-500/15 text-red-300" : "bg-white/10 text-zinc-400",
+                            )}
+                          >
+                            {days === 0 ? "oggi" : `${days} gg`}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })
+              ) : (
+                <p className="text-xs text-zinc-500 text-center py-10 italic">
+                  Tutti i tuoi tesori sono a casa.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
+
 const DetailsModal = ({
   item,
-  isOpen,
+  allItems,
   onClose,
-  onUpdateStatus,
-  onUpdatePages,
+  onPatch,
   onUpdateLoan,
   onEdit,
   onDelete,
   onMarkAsBought,
+  onNavigate,
 }: {
   item: LibraryItem | null;
-  isOpen: boolean;
+  allItems: LibraryItem[];
   onClose: () => void;
-  onUpdateStatus: (id: string, status: Status) => void;
-  onUpdatePages: (id: string, pagesRead: number) => void;
+  onPatch: (id: string, patch: Partial<LibraryItem>) => void;
   onUpdateLoan: (id: string, loanedTo: string, loanDate: Date | null) => void;
   onEdit: (item: LibraryItem) => void;
   onDelete: (id: string) => void;
   onMarkAsBought?: (item: LibraryItem) => void;
+  onNavigate: (item: LibraryItem) => void;
 }) => {
-  if (!item || !isOpen) return null;
+  const isOpen = Boolean(item);
+  const [pagesDraft, setPagesDraft] = useState<number>(0);
+  const [loanDraft, setLoanDraft] = useState("");
+  const [showFullDescription, setShowFullDescription] = useState(false);
+
+  useEscapeKey(isOpen, onClose);
+  useBodyScrollLock(isOpen);
+
+  useEffect(() => {
+    setPagesDraft(item?.pagesRead || 0);
+  }, [item?.id, item?.pagesRead]);
+
+  useEffect(() => {
+    setLoanDraft("");
+    setShowFullDescription(false);
+  }, [item?.id]);
+
+  const seriesNav = useMemo(() => {
+    if (!item?.seriesName) return null;
+    const siblings = allItems
+      .filter((i) => i.seriesName === item.seriesName && !!i.isWishlist === !!item.isWishlist)
+      .sort((a, b) => (getVolume(a) ?? 0) - (getVolume(b) ?? 0));
+    const idx = siblings.findIndex((i) => i.id === item.id);
+    if (idx === -1 || siblings.length < 2) return null;
+    return {
+      prev: siblings[idx - 1],
+      next: siblings[idx + 1],
+      position: idx + 1,
+      total: siblings.length,
+    };
+  }, [allItems, item]);
+
+  if (!item) return null;
 
   const categoryConfig = {
-    book: { icon: Book, color: "text-amber-600", label: "Classic" },
-    manga: { icon: Sparkles, color: "text-purple-600", label: "Manga" },
-    gdr: { icon: Sword, color: "text-red-700", label: "RPG" },
+    book: { icon: Book, color: "text-amber-500", label: "Libro" },
+    manga: { icon: Sparkles, color: "text-purple-400", label: "Manga" },
+    gdr: { icon: Sword, color: "text-red-400", label: "GDR" },
+  };
+  const statusConfig: Record<Status, { label: string }> = {
+    unread: { label: "Da leggere" },
+    reading: { label: "In lettura" },
+    read: { label: "Finito" },
   };
 
-  const statusConfig = {
-    unread: { icon: Clock, label: "To Read", color: "text-zinc-500" },
-    reading: { icon: BookOpen, label: "Reading", color: "text-blue-400" },
-    read: { icon: CheckCircle2, label: "Finished", color: "text-green-500" },
+  const config = categoryConfig[item.category] || categoryConfig.book;
+  const CatIcon = config.icon;
+  const volume = getVolume(item);
+  const totalPages = Number(item.totalPages) || 0;
+  const progress = totalPages ? Math.min(100, (pagesDraft / totalPages) * 100) : 0;
+  const loanDays = daysSince(item.loanDate);
+
+  const commitPages = (value: number) => {
+    const clamped = Math.max(0, totalPages ? Math.min(totalPages, value) : value);
+    setPagesDraft(clamped);
+    if (clamped === (item.pagesRead || 0)) return;
+    const patch: Partial<LibraryItem> = { pagesRead: clamped };
+    if (clamped > 0 && item.status === "unread") patch.status = "reading";
+    if (totalPages && clamped >= totalPages) patch.status = "read";
+    onPatch(item.id, patch);
   };
 
-  const config = categoryConfig[item.category];
-  const status = statusConfig[item.status];
-  const Icon = config.icon;
-  const progress = item.totalPages
-    ? Math.min(100, ((item.pagesRead || 0) / item.totalPages) * 100)
-    : 0;
+  const setStatus = (s: Status) => {
+    if (s === item.status) return;
+    const patch: Partial<LibraryItem> = { status: s };
+    if (s === "read" && totalPages) patch.pagesRead = totalPages;
+    if (s === "unread") patch.pagesRead = 0;
+    onPatch(item.id, patch);
+  };
+
+  const submitLoan = () => {
+    const name = loanDraft.trim();
+    if (!name) return;
+    onUpdateLoan(item.id, name, new Date());
+    setLoanDraft("");
+  };
+
+  const longDescription = (item.description || "").length > 320;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md overflow-hidden">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md overflow-hidden"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <motion.div
+        key={item.id}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="details-title"
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-4xl rounded-none sm:rounded-[2rem] p-4 sm:p-8 space-y-5 sm:space-y-6 overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
+        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl rounded-none sm:rounded-[2rem] shadow-2xl flex flex-col overflow-hidden"
       >
-        <div className="flex justify-between items-start">
-          <div className="space-y-0.5">
-            <span
-              className={cn(
-                "text-[9px] uppercase tracking-widest font-bold",
-                config.color,
-              )}
-            >
+        {/* Header */}
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-8 pt-4 sm:pt-6 pb-3 border-b border-white/5">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={cn("flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold", config.color)}>
+              <CatIcon className="w-3.5 h-3.5" />
               {config.label}
             </span>
-            <h2 className="text-xl font-serif font-bold text-white leading-tight">
-              {item.title}{item.volumeNumber ? ` · Vol. ${item.volumeNumber}` : ''}
-            </h2>
-            <div className="flex items-center justify-between">
-              <p className="text-sm text-zinc-500">{item.author}</p>
-              {item.rating ? (
-                <StarRating rating={item.rating} readonly={true} />
-              ) : null}
-            </div>
-            {item.tags && item.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-2">
-                {item.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="bg-white/5 border border-white/10 text-zinc-300 text-[10px] px-2 py-0.5 rounded-full"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
+            {seriesNav && (
+              <span className="text-[10px] text-zinc-500 truncate">
+                · {item.seriesName} ({seriesNav.position}/{seriesNav.total})
+              </span>
             )}
           </div>
-          <div className="flex items-center space-x-2">
-            {item.isWishlist && onMarkAsBought && (
-              <button
-                onClick={() => {
-                  onMarkAsBought(item);
-                  onClose();
-                }}
-                className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all cursor-pointer active:scale-95"
-                title="Segna come comprato"
-              >
-                <ShoppingBag className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Comprato</span>
-              </button>
+          <div className="flex items-center gap-1">
+            {seriesNav && (
+              <>
+                <button
+                  onClick={() => seriesNav.prev && onNavigate(seriesNav.prev)}
+                  disabled={!seriesNav.prev}
+                  className="p-2 text-zinc-400 hover:text-white disabled:opacity-25 rounded-xl hover:bg-white/5"
+                  aria-label="Volume precedente"
+                  title="Volume precedente"
+                >
+                  <ChevronRight className="w-5 h-5 rotate-180" />
+                </button>
+                <button
+                  onClick={() => seriesNav.next && onNavigate(seriesNav.next)}
+                  disabled={!seriesNav.next}
+                  className="p-2 text-zinc-400 hover:text-white disabled:opacity-25 rounded-xl hover:bg-white/5"
+                  aria-label="Volume successivo"
+                  title="Volume successivo"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+              </>
             )}
             <button
-              onClick={() => {
-                onEdit(item);
-                onClose();
-              }}
-              className="flex items-center space-x-1.5 px-3 py-1.5 bg-white text-zinc-900 font-bold text-xs rounded-xl shadow-lg hover:bg-zinc-200 transition-all cursor-pointer"
-              title="Edit Item"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              <span>Edit</span>
-            </button>
-            <button
-              onClick={() => {
-                onDelete(item.id);
-                onClose();
-              }}
-              className="p-2 text-zinc-500 hover:text-red-500 transition-all"
-              title="Delete Item"
-            >
-              <Trash2 className="w-5 h-5" />
-            </button>
-            <button
               onClick={onClose}
-              className="p-2 text-zinc-500 hover:text-white"
+              aria-label="Chiudi"
+              className="p-2 text-zinc-500 hover:text-white rounded-xl hover:bg-white/5"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {item.isWishlist && (
-          <div className="p-3.5 sm:p-4 bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-emerald-500/10 border border-rose-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
-            <div className="flex items-center space-x-3">
-              <div className="p-2 bg-rose-500/20 text-rose-400 rounded-xl shrink-0">
-                <Heart className="w-5 h-5 fill-rose-500/30" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <span>Presente nella tua Wishlist</span>
-                </p>
-                <p className="text-[11px] text-zinc-400">
-                  Non fa ancora parte della tua libreria fisica.
-                </p>
-              </div>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto no-scrollbar px-4 sm:px-8 py-5 space-y-5">
+          <div className="flex gap-4 sm:gap-6">
+            <div className="w-28 h-40 sm:w-36 sm:h-52 flex-shrink-0 bg-black/40 rounded-xl overflow-hidden border border-white/10 shadow-2xl relative">
+              <BookCover
+                title={item.title}
+                author={item.author}
+                category={item.category}
+                system={item.system}
+                volumeNumber={volume}
+                coverUrl={item.coverUrl}
+              />
             </div>
-            {onMarkAsBought && (
-              <button
-                onClick={() => {
-                  onMarkAsBought(item);
-                  onClose();
-                }}
-                className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95 shrink-0"
-              >
-                <ShoppingBag className="w-4 h-4" />
-                <span>Segna come Comprato</span>
-              </button>
-            )}
-          </div>
-        )}
+            <div className="flex-1 min-w-0 space-y-3">
+              <div>
+                <h2 id="details-title" className="text-xl sm:text-2xl font-serif font-bold text-white leading-tight break-words">
+                  {item.title}
+                  {volume !== undefined && (
+                    <span className="text-zinc-500 font-sans text-base font-medium"> · Vol. {volume}</span>
+                  )}
+                </h2>
+                {item.author && <p className="text-sm text-zinc-400 mt-1">{item.author}</p>}
+              </div>
 
-        <div className="flex space-x-5">
-          <div className="w-24 h-36 sm:w-28 sm:h-40 flex-shrink-0 bg-black/40 rounded-xl overflow-hidden border border-white/10 shadow-lg relative">
-            <BookCover
-              title={item.title}
-              author={item.author}
-              category={item.category}
-              system={item.system}
-              volumeNumber={item.volumeNumber}
-              coverUrl={item.coverUrl}
-            />
-          </div>
-          <div className="flex-1 space-y-4">
-            <div className="space-y-2">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                Read Status
-              </label>
+              <div className="flex items-center gap-2">
+                <StarRating
+                  rating={item.rating || 0}
+                  setRating={(r) => onPatch(item.id, { rating: r })}
+                />
+              </div>
+
               <div className="flex flex-wrap gap-1.5">
                 {(["unread", "reading", "read"] as Status[]).map((s) => (
                   <button
                     key={s}
-                    onClick={() => onUpdateStatus(item.id, s)}
+                    onClick={() => setStatus(s)}
+                    aria-pressed={item.status === s}
                     className={cn(
-                      "px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-widest border transition-all",
+                      "px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest border transition-all",
                       item.status === s
-                        ? "bg-white text-zinc-900 border-white/30"
-                        : "bg-white/5 text-zinc-500 border-white/10 hover:bg-white/10",
+                        ? s === "read"
+                          ? "bg-emerald-500 text-white border-emerald-400"
+                          : s === "reading"
+                            ? "bg-blue-500 text-white border-blue-400"
+                            : "bg-white text-zinc-900 border-white/30"
+                        : "bg-white/5 text-zinc-500 border-white/10 hover:bg-white/10 hover:text-zinc-300",
                     )}
                   >
                     {statusConfig[s].label}
                   </button>
                 ))}
               </div>
-            </div>
 
-            {item.price !== undefined && (
-              <div className="space-y-0.5">
-                <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-                  Value
-                </label>
-                <p className="text-lg font-mono text-white">
-                  €{item.price.toFixed(2)}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {item.notes && (
-          <div className="glass-card p-5 rounded-2xl sm:rounded-3xl space-y-2 bg-amber-500/5 border border-amber-500/20">
-            <div className="flex items-center space-x-2 text-[var(--color-brand-orange)]">
-              <Edit3 className="w-4 h-4" />
-              <label className="text-[10px] uppercase tracking-widest font-bold">
-                Notes
-              </label>
-            </div>
-            <p className="text-zinc-200 text-xs sm:text-sm leading-relaxed whitespace-pre-line">
-              {item.notes}
-            </p>
-          </div>
-        )}
-
-        {item.description && (
-          <div className="glass-card p-5 rounded-3xl space-y-2">
-            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
-              Plot / Description
-            </label>
-            <p className="text-zinc-300 text-xs leading-relaxed whitespace-pre-line max-h-40 overflow-y-auto no-scrollbar">
-              {item.description}
-            </p>
-          </div>
-        )}
-
-        {!item.notes && !item.description && (
-          <div className="p-4 rounded-2xl border border-dashed border-white/10 flex items-center justify-between text-zinc-500">
-            <span className="text-xs">No notes added for this item</span>
-            <button
-              onClick={() => {
-                onEdit(item);
-                onClose();
-              }}
-              className="text-xs text-[var(--color-brand-purple)] hover:text-white font-bold flex items-center gap-1 transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Notes</span>
-            </button>
-          </div>
-        )}
-
-        {item.review && (
-          <div className="glass-card p-5 rounded-3xl space-y-2 bg-purple-900/10 border-purple-500/20">
-            <label className="text-[10px] uppercase tracking-widest text-purple-400 font-bold">
-              Reader's Diary / Review
-            </label>
-            <p className="text-zinc-300 text-xs leading-relaxed whitespace-pre-line italic">
-              "{item.review}"
-            </p>
-          </div>
-        )}
-
-        {/* Progress Section */}
-        <div className="glass-card p-5 rounded-3xl space-y-3">
-          <div className="flex justify-between items-center">
-            <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
-              Reading Progress
-            </label>
-            <p className="text-xs font-mono text-zinc-500">
-              <span className="text-white font-bold">
-                {item.pagesRead || 0}
-              </span>{" "}
-              / {item.totalPages || "?"}{" "}
-              <span className="ml-1 text-[10px] opacity-50">
-                ({Math.round(progress)}%)
-              </span>
-            </p>
-          </div>
-
-          <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden border border-white/5 shadow-inner">
-            <motion.div
-              initial={{ width: 0 }}
-              animate={{ width: `${progress}%` }}
-              className={cn(
-                "h-full transition-all duration-700 ease-out",
-                item.category === "manga"
-                  ? "bg-purple-600 shadow-[0_0_8px_rgba(147,51,234,0.8)]"
-                  : item.category === "gdr"
-                    ? "bg-red-700 shadow-[0_0_8px_rgba(185,28,28,0.8)]"
-                    : "bg-amber-600 shadow-[0_0_8px_rgba(217,119,6,0.8)]",
+              {item.tags && item.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {item.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="bg-white/5 border border-white/10 text-zinc-300 text-[10px] px-2 py-0.5 rounded-full"
+                    >
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
               )}
-            />
+            </div>
           </div>
 
-          <div className="flex items-center gap-3 pt-1">
-            <button
-              onClick={() =>
-                onUpdatePages(item.id, Math.max(0, (item.pagesRead || 0) - 10))
-              }
-              className="w-8 h-8 flex items-center justify-center bg-white/5 rounded-lg text-xs text-white hover:bg-white/10 active:scale-90 transition-all shrink-0"
-            >
-              -10
-            </button>
-            <input
-              type="range"
-              min="0"
-              max={item.totalPages || 1000}
-              value={item.pagesRead || 0}
-              onChange={(e) => onUpdatePages(item.id, parseInt(e.target.value))}
-              className="flex-1 h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
-            />
-            <button
-              onClick={() =>
-                onUpdatePages(
-                  item.id,
-                  Math.min(item.totalPages || 1000, (item.pagesRead || 0) + 10),
-                )
-              }
-              className="w-8 h-8 flex items-center justify-center bg-white/5 rounded-lg text-xs text-white hover:bg-white/10 active:scale-90 transition-all shrink-0"
-            >
-              +10
-            </button>
-          </div>
-        </div>
-
-        {/* Info Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {item.genre && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
-                Genre
-              </label>
-              <p className="text-white text-xs">{item.genre}</p>
-            </div>
-          )}
-          {item.isbn && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
-                ISBN
-              </label>
-              <p className="text-white text-xs font-mono">{item.isbn}</p>
-            </div>
-          )}
-          {item.totalVolumes && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
-                Volume
-              </label>
-              <p className="text-white text-xs">{item.totalVolumes}</p>
-            </div>
-          )}
-          {item.system && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
-                System
-              </label>
-              <p className="text-white text-xs">{item.system}</p>
-            </div>
-          )}
-          {item.seriesName && (
-            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-              <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
-                Series
-              </label>
-              <p className="text-white text-xs">{item.seriesName}</p>
-            </div>
-          )}
-        </div>
-
-        {/* Loan Section */}
-        <div className="glass-card p-5 rounded-3xl space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Handshake
-                className={cn(
-                  "w-5 h-5",
-                  item.loanedTo ? "text-amber-500" : "text-zinc-500",
-                )}
-              />
-              <div>
-                <p className="text-xs font-bold text-white">Loan Registry</p>
-                <p className="text-[10px] text-zinc-500">
-                  Track who borrowed this
-                </p>
+          {item.isWishlist && (
+            <div className="p-3.5 sm:p-4 bg-gradient-to-r from-rose-500/10 via-amber-500/10 to-emerald-500/10 border border-rose-500/20 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-rose-500/20 text-rose-400 rounded-xl shrink-0">
+                  <Heart className="w-5 h-5 fill-rose-500/30" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">Nella tua wishlist</p>
+                  <p className="text-[11px] text-zinc-400">
+                    Non fa ancora parte della tua libreria fisica
+                    {item.price ? ` · ${formatPrice(item.price)}` : ""}.
+                  </p>
+                </div>
               </div>
+              {onMarkAsBought && (
+                <button
+                  onClick={() => onMarkAsBought(item)}
+                  className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg flex items-center justify-center gap-1.5 transition-all active:scale-95 shrink-0"
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  <span>Segna come comprato</span>
+                </button>
+              )}
             </div>
-            {item.loanedTo && (
+          )}
+
+          {/* Progress */}
+          <div className="p-5 rounded-2xl space-y-3 bg-white/[0.03] border border-white/10">
+            <div className="flex justify-between items-center">
+              <label htmlFor={`pages-${item.id}`} className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">
+                Progresso lettura
+              </label>
+              <p className="text-xs font-mono text-zinc-500">
+                <span className="text-white font-bold">{pagesDraft}</span> / {totalPages || "?"}
+                {totalPages > 0 && <span className="ml-1 text-[10px] opacity-60">({Math.round(progress)}%)</span>}
+              </p>
+            </div>
+
+            {totalPages > 0 ? (
+              <>
+                <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden border border-white/5">
+                  <div
+                    className={cn(
+                      "h-full transition-all duration-300 ease-out",
+                      item.category === "manga"
+                        ? "bg-purple-600"
+                        : item.category === "gdr"
+                          ? "bg-red-600"
+                          : "bg-amber-600",
+                    )}
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={() => commitPages(pagesDraft - 10)}
+                    className="w-10 h-9 flex items-center justify-center bg-white/5 rounded-lg text-xs text-white hover:bg-white/10 active:scale-90 transition-all shrink-0"
+                    aria-label="Meno 10 pagine"
+                  >
+                    -10
+                  </button>
+                  <input
+                    id={`pages-${item.id}`}
+                    type="range"
+                    min="0"
+                    max={totalPages}
+                    value={pagesDraft}
+                    onChange={(e) => setPagesDraft(parseInt(e.target.value))}
+                    onPointerUp={(e) => commitPages(parseInt((e.target as HTMLInputElement).value))}
+                    onKeyUp={(e) => commitPages(parseInt((e.target as HTMLInputElement).value))}
+                    onBlur={(e) => commitPages(parseInt(e.target.value))}
+                    className="flex-1 h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-white"
+                  />
+                  <button
+                    onClick={() => commitPages(pagesDraft + 10)}
+                    className="w-10 h-9 flex items-center justify-center bg-white/5 rounded-lg text-xs text-white hover:bg-white/10 active:scale-90 transition-all shrink-0"
+                    aria-label="Più 10 pagine"
+                  >
+                    +10
+                  </button>
+                  <input
+                    type="number"
+                    min="0"
+                    max={totalPages}
+                    inputMode="numeric"
+                    aria-label="Pagina corrente"
+                    value={pagesDraft}
+                    onChange={(e) => setPagesDraft(Math.max(0, parseInt(e.target.value) || 0))}
+                    onBlur={(e) => commitPages(parseInt(e.target.value) || 0)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") commitPages(parseInt((e.target as HTMLInputElement).value) || 0);
+                    }}
+                    className="w-16 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-base sm:text-xs text-white text-center font-mono focus:outline-none focus:border-white/30"
+                  />
+                </div>
+              </>
+            ) : (
               <button
-                onClick={() => onUpdateLoan(item.id, "", null)}
-                className="text-[10px] font-bold text-red-500 uppercase tracking-widest hover:underline"
+                onClick={() => onEdit(item)}
+                className="text-xs text-blue-400 hover:text-blue-300 font-semibold"
               >
-                Return Item
+                Imposta il numero di pagine per tracciare i progressi →
               </button>
             )}
           </div>
 
-          {item.loanedTo ? (
-            <div className="p-3 bg-amber-900/10 border border-amber-900/20 rounded-xl">
-              <p className="text-xs text-white">
-                Loaned to{" "}
-                <span className="font-bold text-amber-500">
-                  {item.loanedTo}
-                </span>
+          {item.notes && (
+            <div className="p-5 rounded-2xl space-y-2 bg-amber-500/5 border border-amber-500/20">
+              <div className="flex items-center space-x-2 text-[var(--color-brand-orange)]">
+                <Edit3 className="w-4 h-4" />
+                <span className="text-[10px] uppercase tracking-widest font-bold">Note</span>
+              </div>
+              <p className="text-zinc-200 text-sm leading-relaxed whitespace-pre-line">{item.notes}</p>
+            </div>
+          )}
+
+          {item.description && (
+            <div className="p-5 rounded-2xl space-y-2 bg-white/[0.03] border border-white/10">
+              <span className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Trama</span>
+              <p
+                className={cn(
+                  "text-zinc-300 text-sm leading-relaxed whitespace-pre-line",
+                  longDescription && !showFullDescription && "line-clamp-5",
+                )}
+              >
+                {item.description}
               </p>
-              <p className="text-[10px] text-zinc-500">
-                Since {formatDate(item.loanDate)}
+              {longDescription && (
+                <button
+                  onClick={() => setShowFullDescription((v) => !v)}
+                  className="text-xs font-semibold text-blue-400 hover:text-blue-300"
+                >
+                  {showFullDescription ? "Mostra meno" : "Leggi tutto"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {item.review && (
+            <div className="p-5 rounded-2xl space-y-2 bg-purple-900/10 border border-purple-500/20">
+              <span className="text-[10px] uppercase tracking-widest text-purple-400 font-bold">
+                Diario di lettura
+              </span>
+              <p className="text-zinc-300 text-sm leading-relaxed whitespace-pre-line italic">
+                "{item.review}"
               </p>
             </div>
-          ) : (
-            <div className="flex space-x-2">
-              <input
-                id={`loan-input-${item.id}`}
-                className="flex-1 bg-white/5 border border-white/10 rounded-xl p-2 text-xs text-white focus:outline-none focus:border-white/20"
-                placeholder="Friend's name..."
-              />
-              <button
-                onClick={() => {
-                  const input = document.getElementById(
-                    `loan-input-${item.id}`,
-                  ) as HTMLInputElement;
-                  if (input.value)
-                    onUpdateLoan(item.id, input.value, new Date());
-                }}
-                className="px-4 bg-white text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-xl hover:bg-white/10"
-              >
-                Loan
-              </button>
+          )}
+
+          {!item.notes && !item.description && !item.review && (
+            <button
+              onClick={() => onEdit(item)}
+              className="w-full p-4 rounded-2xl border border-dashed border-white/10 flex items-center justify-between text-zinc-500 hover:border-white/20 hover:text-zinc-300 transition-colors"
+            >
+              <span className="text-xs">Nessuna nota o trama per questo elemento</span>
+              <span className="text-xs text-[var(--color-brand-purple)] font-bold flex items-center gap-1">
+                <Plus className="w-3.5 h-3.5" /> Aggiungi
+              </span>
+            </button>
+          )}
+
+          {/* Info grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {[
+              { label: "Genere", value: item.genre },
+              { label: "Sistema", value: item.system },
+              { label: "Serie", value: item.seriesName },
+              { label: "Volume", value: volume !== undefined ? String(volume) : item.totalVolumes },
+              { label: "ISBN", value: item.isbn, mono: true },
+              { label: "Prezzo", value: item.price !== undefined && item.price !== null ? formatPrice(item.price) : undefined, mono: true },
+              { label: "Aggiunto il", value: formatDate(item.createdAt) || undefined },
+            ]
+              .filter((f) => f.value)
+              .map((f) => (
+                <div key={f.label} className="bg-white/5 p-3 rounded-xl border border-white/10 min-w-0">
+                  <span className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold block mb-0.5">
+                    {f.label}
+                  </span>
+                  <p className={cn("text-white text-xs truncate", f.mono && "font-mono")} title={f.value}>
+                    {f.value}
+                  </p>
+                </div>
+              ))}
+          </div>
+
+          {/* Loan */}
+          {!item.isWishlist && (
+            <div className="p-5 rounded-2xl space-y-4 bg-white/[0.03] border border-white/10">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <Handshake className={cn("w-5 h-5", item.loanedTo ? "text-amber-500" : "text-zinc-500")} />
+                  <div>
+                    <p className="text-xs font-bold text-white">Registro prestiti</p>
+                    <p className="text-[10px] text-zinc-500">Tieni traccia di chi l'ha preso in prestito</p>
+                  </div>
+                </div>
+                {item.loanedTo && (
+                  <button
+                    onClick={() => onUpdateLoan(item.id, "", null)}
+                    className="px-3 py-1.5 text-[10px] font-bold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-lg uppercase tracking-widest"
+                  >
+                    Restituito
+                  </button>
+                )}
+              </div>
+
+              {item.loanedTo ? (
+                <div className="p-3 bg-amber-900/10 border border-amber-900/30 rounded-xl flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs text-white">
+                      Prestato a <span className="font-bold text-amber-400">{item.loanedTo}</span>
+                    </p>
+                    <p className="text-[10px] text-zinc-500">dal {formatDate(item.loanDate)}</p>
+                  </div>
+                  {loanDays !== null && (
+                    <span
+                      className={cn(
+                        "text-[10px] font-bold px-2 py-0.5 rounded-full",
+                        loanDays > 30 ? "bg-red-500/15 text-red-300" : "bg-white/10 text-zinc-400",
+                      )}
+                    >
+                      {loanDays === 0 ? "oggi" : `${loanDays} giorni`}
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <form
+                  className="flex space-x-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    submitLoan();
+                  }}
+                >
+                  <input
+                    className="flex-1 bg-white/5 border border-white/10 rounded-xl p-2.5 text-base sm:text-xs text-white focus:outline-none focus:border-white/30 placeholder:text-zinc-500"
+                    placeholder="Nome dell'amico..."
+                    aria-label="Nome di chi prende in prestito"
+                    value={loanDraft}
+                    onChange={(e) => setLoanDraft(e.target.value)}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!loanDraft.trim()}
+                    className="px-4 bg-white text-zinc-900 text-[10px] font-bold uppercase tracking-widest rounded-xl hover:bg-zinc-200 disabled:opacity-40"
+                  >
+                    Presta
+                  </button>
+                </form>
+              )}
             </div>
           )}
         </div>
 
-        {/* Footer Action Bar */}
-        <div className="pt-4 border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
+        {/* Footer */}
+        <div className="px-4 sm:px-8 py-4 border-t border-white/5 bg-zinc-900 flex items-center justify-between gap-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button
-            onClick={() => {
-              onDelete(item.id);
-              onClose();
-            }}
-            className="px-3.5 py-2.5 text-zinc-400 hover:text-red-400 text-xs font-semibold rounded-xl flex items-center gap-1.5 hover:bg-red-500/10 transition-colors cursor-pointer"
+            onClick={() => onDelete(item.id)}
+            className="px-3.5 py-2.5 text-zinc-400 hover:text-red-400 text-xs font-semibold rounded-xl flex items-center gap-1.5 hover:bg-red-500/10 transition-colors"
           >
             <Trash2 className="w-4 h-4" />
-            <span>Delete Item</span>
+            <span>Elimina</span>
           </button>
-
-          <div className="flex items-center gap-2">
-            {item.isWishlist && onMarkAsBought && (
-              <button
-                onClick={() => {
-                  onMarkAsBought(item);
-                  onClose();
-                }}
-                className="py-2.5 px-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-lg transition-all cursor-pointer active:scale-95"
-              >
-                <ShoppingBag className="w-3.5 h-3.5" />
-                <span>Segna come Comprato</span>
-              </button>
-            )}
-
-            <button
-              onClick={() => {
-                onEdit(item);
-                onClose();
-              }}
-              className="py-2.5 px-4 bg-white text-zinc-900 font-bold text-xs rounded-xl hover:bg-zinc-200 flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              <span>Edit Item Details</span>
-            </button>
-          </div>
+          <button
+            onClick={() => onEdit(item)}
+            className="py-2.5 px-5 bg-white text-zinc-900 font-bold text-xs rounded-xl hover:bg-zinc-200 flex items-center justify-center gap-2 shadow-lg transition-all"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            <span>Modifica</span>
+          </button>
         </div>
       </motion.div>
     </div>
   );
 };
 
+
 const DeleteConfirmationModal = ({
   isOpen,
   onConfirm,
   onCancel,
+  title,
+  count = 1,
 }: {
   isOpen: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  title?: string;
+  count?: number;
 }) => {
+  useEscapeKey(isOpen, onCancel);
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onCancel();
+      }}
+    >
       <motion.div
+        role="alertdialog"
+        aria-modal="true"
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         className="bg-zinc-900 border border-white/10 p-6 rounded-3xl max-w-sm w-full space-y-6 shadow-2xl"
       >
-        <div className="space-y-2 text-center">
-          <h3 className="text-xl font-bold text-white">Sei sicuro?</h3>
-          <p className="text-zinc-500 text-sm">
-            Vuoi davvero eliminare questo elemento dalla tua libreria? L'azione
-            è irreversibile.
+        <div className="space-y-3 text-center">
+          <div className="w-12 h-12 mx-auto rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
+            <Trash2 className="w-5 h-5 text-red-400" />
+          </div>
+          <h3 className="text-xl font-bold text-white">
+            {count > 1 ? `Eliminare ${count} elementi?` : "Eliminare questo elemento?"}
+          </h3>
+          <p className="text-zinc-400 text-sm">
+            {title && count === 1 ? (
+              <>
+                <strong className="text-zinc-200">"{title}"</strong> verrà rimosso
+                definitivamente dalla tua libreria.
+              </>
+            ) : (
+              "L'azione è irreversibile."
+            )}
           </p>
         </div>
         <div className="flex space-x-3">
           <button
+            autoFocus
             onClick={onCancel}
             className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all"
           >
@@ -2537,93 +3049,133 @@ const DeleteConfirmationModal = ({
 
 const BulkToolbar = ({
   count,
+  visibleCount,
   totalPrice,
   onEdit,
   onDelete,
   onClear,
+  onSelectAll,
   onMarkAsBought,
   isWishlist,
 }: {
   count: number;
+  visibleCount: number;
   totalPrice: number;
   onEdit: () => void;
   onDelete: () => void;
   onClear: () => void;
+  onSelectAll: () => void;
   onMarkAsBought?: () => void;
   isWishlist?: boolean;
-}) => (
-  <motion.div
-    initial={{ y: 100 }}
-    animate={{ y: 0 }}
-    exit={{ y: 100 }}
-    className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-zinc-900 border border-white/10 rounded-2xl p-2 flex items-center space-x-2 shadow-2xl backdrop-blur-xl"
-  >
-    <div className="px-4 py-2 bg-white/5 rounded-xl border border-white/10 flex flex-col items-center">
-      <span className="text-xs font-bold text-white">{count} selected</span>
-      {totalPrice > 0 && (
-        <span className="text-[9px] text-zinc-500 font-mono">
-          Total: €{totalPrice.toFixed(2)}
+}) => {
+  const allSelected = count > 0 && count >= visibleCount;
+  return (
+    <motion.div
+      initial={{ y: 100, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: 100, opacity: 0 }}
+      className="fixed bottom-24 sm:bottom-8 left-1/2 -translate-x-1/2 z-50 bg-zinc-900/95 border border-white/10 rounded-2xl p-2 flex items-center gap-1.5 sm:gap-2 shadow-2xl backdrop-blur-xl max-w-[calc(100vw-1.5rem)]"
+    >
+      <div className="px-3 py-1.5 bg-white/5 rounded-xl border border-white/10 flex flex-col items-center min-w-[84px]">
+        <span className="text-xs font-bold text-white whitespace-nowrap">
+          {count} selezionati
         </span>
-      )}
-    </div>
-    {isWishlist && onMarkAsBought && (
+        {totalPrice > 0 && (
+          <span className="text-[9px] text-zinc-500 font-mono">{formatPrice(totalPrice)}</span>
+        )}
+      </div>
       <button
-        onClick={onMarkAsBought}
-        className="px-3 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-lg active:scale-95 cursor-pointer"
-        title="Segna selezionati come comprati"
+        onClick={onSelectAll}
+        className="p-2.5 sm:px-3 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold"
+        title={allSelected ? "Deseleziona tutti" : "Seleziona tutti i visibili"}
       >
-        <ShoppingBag className="w-4 h-4" />
-        <span className="hidden sm:inline">Comprati ({count})</span>
+        <ListChecks className="w-4 h-4" />
+        <span className="hidden sm:inline">{allSelected ? "Nessuno" : "Tutti"}</span>
       </button>
-    )}
-    <button
-      onClick={onEdit}
-      className="p-3 bg-white/5 hover:bg-white/10 text-white rounded-xl transition-all"
-      title="Mass Edit"
-    >
-      <Edit3 className="w-5 h-5" />
-    </button>
-    <button
-      onClick={onDelete}
-      className="p-3 bg-red-50 hover:bg-red-900/40 text-red-500 rounded-xl transition-all"
-      title="Mass Delete"
-    >
-      <Trash2 className="w-5 h-5" />
-    </button>
-    <div className="w-px h-8 bg-white/10 mx-1" />
-    <button
-      onClick={onClear}
-      className="p-3 text-zinc-500 hover:text-white transition-all"
-      title="Clear Selection"
-    >
-      <X className="w-5 h-5" />
-    </button>
-  </motion.div>
-);
+      {isWishlist && onMarkAsBought && (
+        <button
+          onClick={onMarkAsBought}
+          disabled={count === 0}
+          className="p-2.5 sm:px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-40 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95"
+          title="Segna selezionati come comprati"
+        >
+          <ShoppingBag className="w-4 h-4" />
+          <span className="hidden sm:inline">Comprati</span>
+        </button>
+      )}
+      <button
+        onClick={onEdit}
+        disabled={count === 0}
+        className="p-2.5 bg-white/5 hover:bg-white/10 disabled:opacity-40 text-white rounded-xl transition-all"
+        title="Modifica selezionati"
+        aria-label="Modifica selezionati"
+      >
+        <Edit3 className="w-4 h-4" />
+      </button>
+      <button
+        onClick={onDelete}
+        disabled={count === 0}
+        className="p-2.5 bg-red-500/10 hover:bg-red-500/20 disabled:opacity-40 text-red-400 rounded-xl transition-all"
+        title="Elimina selezionati"
+        aria-label="Elimina selezionati"
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+      <div className="w-px h-8 bg-white/10" />
+      <button
+        onClick={onClear}
+        className="p-2.5 text-zinc-500 hover:text-white transition-all"
+        title="Esci dalla selezione"
+        aria-label="Esci dalla selezione"
+      >
+        <X className="w-4 h-4" />
+      </button>
+    </motion.div>
+  );
+};
 
 const BulkEditModal = ({
   isOpen,
+  count,
   onClose,
   onSave,
 }: {
   isOpen: boolean;
+  count: number;
   onClose: () => void;
-  onSave: (updates: any) => void;
+  onSave: (updates: any, addTag?: string) => void;
 }) => {
   const [seriesName, setSeriesName] = useState("");
   const [author, setAuthor] = useState("");
   const [status, setStatus] = useState<Status | "">("");
-  const [description, setDescription] = useState("");
+  const [category, setCategory] = useState<Category | "">("");
+  const [tag, setTag] = useState("");
   const [price, setPrice] = useState<number | "">("");
 
+  useEscapeKey(isOpen, onClose);
+  useBodyScrollLock(isOpen);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSeriesName("");
+    setAuthor("");
+    setStatus("");
+    setCategory("");
+    setTag("");
+    setPrice("");
+  }, [isOpen]);
+
+  const updates: any = {};
+  if (seriesName.trim()) updates.seriesName = seriesName.trim();
+  if (author.trim()) updates.author = author.trim();
+  if (status) updates.status = status;
+  if (category) updates.category = category;
+  if (price !== "" && !isNaN(price)) updates.price = price;
+  const hasChanges = Object.keys(updates).length > 0 || tag.trim().length > 0;
+
   const handleApply = () => {
-    const updates: any = {};
-    if (seriesName) updates.seriesName = seriesName;
-    if (author) updates.author = author;
-    if (status) updates.status = status;
-    if (description) updates.description = description;
-    if (price !== "") updates.price = price;
-    onSave(updates);
+    if (!hasChanges) return;
+    onSave(updates, tag.trim() || undefined);
     onClose();
   };
 
@@ -2632,110 +3184,143 @@ const BulkEditModal = ({
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-md overflow-hidden"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
+        if (isPlainEnterSubmit(e)) {
+          e.preventDefault();
           handleApply();
         }
       }}
     >
       <motion.div
+        role="dialog"
+        aria-modal="true"
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-3xl rounded-none sm:rounded-[2rem] p-4 sm:p-8 space-y-5 sm:space-y-6 overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
+        className="bg-zinc-900 border-0 sm:border border-white/10 w-full h-full sm:h-auto sm:max-h-[92vh] sm:max-w-xl rounded-none sm:rounded-[2rem] p-4 sm:p-8 space-y-5 overflow-y-auto no-scrollbar shadow-2xl flex flex-col"
       >
-        <div className="flex justify-between items-center">
-          <h2 className="text-xl font-serif font-bold text-white">Mass Edit</h2>
-          <button
-            onClick={onClose}
-            className="p-2 text-zinc-500 hover:text-white"
-          >
+        <div className="flex justify-between items-start">
+          <div>
+            <h2 className="text-xl font-serif font-bold text-white">Modifica multipla</h2>
+            <p className="text-xs text-zinc-500 mt-1">
+              Applica a {count} {count === 1 ? "elemento" : "elementi"}. I campi vuoti restano invariati.
+            </p>
+          </div>
+          <button onClick={onClose} aria-label="Chiudi" className="p-2 text-zinc-500 hover:text-white">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         <div className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Set Series Name
-            </label>
-            <input
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
-              placeholder="Series name..."
-              value={seriesName}
-              onChange={(e) => setSeriesName(e.target.value)}
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <FieldLabel htmlFor="bulk-series">Serie</FieldLabel>
+              <input
+                id="bulk-series"
+                className={inputClass}
+                placeholder="Nome serie..."
+                value={seriesName}
+                onChange={(e) => setSeriesName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <FieldLabel htmlFor="bulk-author">Autore</FieldLabel>
+              <input
+                id="bulk-author"
+                className={inputClass}
+                placeholder="Autore..."
+                value={author}
+                onChange={(e) => setAuthor(e.target.value)}
+              />
+            </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Set Author
-            </label>
-            <input
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
-              placeholder="Author name..."
-              value={author}
-              onChange={(e) => setAuthor(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Set Status
-            </label>
-            <div className="flex flex-col sm:flex-row gap-2">
-              {(["unread", "reading", "read"] as Status[]).map((s) => (
+            <FieldLabel>Categoria</FieldLabel>
+            <div className="grid grid-cols-3 gap-2">
+              {(["book", "manga", "gdr"] as Category[]).map((c) => (
                 <button
-                  key={s}
-                  onClick={() => setStatus(s)}
+                  key={c}
+                  type="button"
+                  aria-pressed={category === c}
+                  onClick={() => setCategory(category === c ? "" : c)}
                   className={cn(
-                    "p-2.5 rounded-xl border transition-all text-[9px] font-bold uppercase tracking-widest",
-                    status === s
+                    "p-2.5 rounded-xl border transition-all text-[10px] font-bold uppercase tracking-widest",
+                    category === c
                       ? "bg-white text-zinc-900 border-white/30"
-                      : "bg-white/5 border-white/10 text-zinc-500",
+                      : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10",
                   )}
                 >
-                  {s}
+                  {CATEGORY_LABELS[c]}
                 </button>
               ))}
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Set Description
-            </label>
-            <textarea
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20 min-h-[80px] resize-none"
-              placeholder="New description for all selected items..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
+            <FieldLabel>Stato</FieldLabel>
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  { id: "unread", label: "Da leggere" },
+                  { id: "reading", label: "In lettura" },
+                  { id: "read", label: "Finito" },
+                ] as { id: Status; label: string }[]
+              ).map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  aria-pressed={status === s.id}
+                  onClick={() => setStatus(status === s.id ? "" : s.id)}
+                  className={cn(
+                    "p-2.5 rounded-xl border transition-all text-[10px] font-bold uppercase tracking-widest",
+                    status === s.id
+                      ? "bg-white text-zinc-900 border-white/30"
+                      : "bg-white/5 border-white/10 text-zinc-500 hover:bg-white/10",
+                  )}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">
-              Set Price (€)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-base sm:text-base sm:text-sm text-white focus:outline-none focus:border-white/20"
-              placeholder="0.00"
-              value={price}
-              onChange={(e) =>
-                setPrice(
-                  e.target.value === "" ? "" : parseFloat(e.target.value),
-                )
-              }
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <FieldLabel htmlFor="bulk-tag">Aggiungi tag</FieldLabel>
+              <input
+                id="bulk-tag"
+                className={inputClass}
+                placeholder="es. Da regalare"
+                value={tag}
+                onChange={(e) => setTag(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <FieldLabel htmlFor="bulk-price">Prezzo (€) per elemento</FieldLabel>
+              <input
+                id="bulk-price"
+                type="number"
+                step="0.01"
+                min="0"
+                inputMode="decimal"
+                className={inputClass}
+                placeholder="0.00"
+                value={price}
+                onChange={(e) => setPrice(e.target.value === "" ? "" : parseFloat(e.target.value))}
+              />
+            </div>
           </div>
         </div>
 
         <button
           onClick={handleApply}
-          className="w-full py-4 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-white/10 transition-all"
+          disabled={!hasChanges}
+          className="w-full py-4 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-zinc-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Apply Changes
+          Applica a {count} {count === 1 ? "elemento" : "elementi"}
         </button>
       </motion.div>
     </div>
@@ -2757,37 +3342,41 @@ const AlertConfirmModal = ({
   onClose: () => void;
   showCancel?: boolean;
 }) => {
+  useEscapeKey(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-white/95 backdrop-blur-xl">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
       <motion.div
+        role="alertdialog"
+        aria-modal="true"
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-[2.5rem] p-8 space-y-6 shadow-2xl text-center"
+        className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-[2rem] p-8 space-y-6 shadow-2xl text-center"
       >
         <div className="space-y-3">
           <h2 className="text-xl font-serif font-bold text-white">{title}</h2>
-          <p className="text-zinc-500 text-sm leading-relaxed">{message}</p>
+          <p className="text-zinc-400 text-sm leading-relaxed whitespace-pre-line">{message}</p>
         </div>
 
         <div className="flex gap-3 pt-2">
           {showCancel && (
             <button
               onClick={onClose}
-              className="flex-1 py-3.5 bg-white/5 text-zinc-500 font-bold rounded-2xl hover:bg-white/10 transition-all border border-white/10 active:scale-95"
+              className="flex-1 py-3.5 bg-white/5 text-zinc-300 font-bold rounded-2xl hover:bg-white/10 transition-all border border-white/10 active:scale-95"
             >
-              Cancel
+              Annulla
             </button>
           )}
           <button
+            autoFocus
             onClick={() => {
-              if (onConfirm) onConfirm();
               onClose();
+              if (onConfirm) onConfirm();
             }}
-            className="flex-1 py-3.5 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-white/10 transition-all active:scale-95 shadow-lg shadow-white/5"
+            className="flex-1 py-3.5 bg-white text-zinc-900 font-bold rounded-2xl hover:bg-zinc-200 transition-all active:scale-95 shadow-lg"
           >
-            {showCancel ? "Confirm" : "OK"}
+            {showCancel ? "Conferma" : "OK"}
           </button>
         </div>
       </motion.div>
@@ -2795,21 +3384,242 @@ const AlertConfirmModal = ({
   );
 };
 
+
+// --- Data helpers ---
+
+const OPTIONAL_STRING_FIELDS = [
+  "genre",
+  "isbn",
+  "totalVolumes",
+  "system",
+  "coverUrl",
+  "seriesName",
+  "loanedTo",
+  "description",
+  "notes",
+  "review",
+] as const;
+
+const isBlank = (v: any) =>
+  v === "" || v === null || v === undefined || (typeof v === "number" && isNaN(v));
+
+// Sanitizes a payload before writing it to Firestore. On updates, optional
+// fields the user explicitly cleared are removed with deleteField() so that
+// e.g. removing a cover, a note or a rating actually persists.
+const sanitizeLibraryItemPayload = (raw: any, isUpdate = false) => {
+  const result: Record<string, any> = {};
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(raw, k);
+
+  if (typeof raw.title === "string" && raw.title.trim()) {
+    result.title = raw.title.trim();
+  }
+  if (typeof raw.author === "string" && raw.author.trim()) {
+    result.author = raw.author.trim();
+  } else if (isUpdate && has("author")) {
+    result.author = deleteField();
+  }
+  if (["book", "manga", "gdr"].includes(raw.category)) {
+    result.category = raw.category;
+  } else if (!isUpdate) {
+    result.category = "book";
+  }
+  if (["unread", "reading", "read"].includes(raw.status)) {
+    result.status = raw.status;
+  } else if (!isUpdate) {
+    result.status = "unread";
+  }
+
+  for (const field of OPTIONAL_STRING_FIELDS) {
+    if (typeof raw[field] === "string" && raw[field].trim().length > 0) {
+      result[field] = raw[field].trim();
+    } else if (isUpdate && has(field) && isBlank(raw[field])) {
+      result[field] = deleteField();
+    }
+  }
+
+  const numberField = (
+    key: string,
+    parse: (v: string) => number,
+    valid: (n: number) => boolean,
+  ) => {
+    if (!isBlank(raw[key])) {
+      const n = parse(String(raw[key]));
+      if (!isNaN(n) && valid(n)) {
+        result[key] = n;
+        return;
+      }
+    }
+    if (isUpdate && has(key)) result[key] = deleteField();
+  };
+  numberField("price", parseFloat, (n) => n >= 0);
+  numberField("totalPages", (v) => parseInt(v, 10), (n) => n > 0);
+  numberField("pagesRead", (v) => parseInt(v, 10), (n) => n >= 0);
+  numberField("rating", (v) => parseInt(v, 10), (n) => n > 0 && n <= 5);
+  numberField("volumeNumber", (v) => parseInt(v, 10), (n) => n > 0);
+
+  if (raw.isWishlist === true) result.isWishlist = true;
+  else if (raw.isWishlist === false) result.isWishlist = false;
+
+  if (raw.loanDate && typeof result.loanedTo === "string") {
+    const d = toDate(raw.loanDate);
+    if (d) result.loanDate = d;
+  } else if (isUpdate && has("loanDate") && !raw.loanedTo) {
+    result.loanDate = deleteField();
+  }
+
+  if (Array.isArray(raw.tags)) {
+    const cleanTags = Array.from(
+      new Set<string>(
+        raw.tags.map((t: any) => String(t).trim()).filter((t: string) => t.length > 0),
+      ),
+    );
+    if (cleanTags.length > 0) result.tags = cleanTags;
+    else if (isUpdate && has("tags")) result.tags = deleteField();
+  }
+
+  delete result.id;
+  delete result.volumeCount;
+  delete result.userId;
+  delete result.createdAt;
+  return result;
+};
+
+// Gracefully handles both strict rules (requiring updatedAt) and
+// schema-restricted rules (disallowing unknown fields or timestamps).
+const safeUpdateDoc = async (docRef: any, data: any, uid?: string) => {
+  try {
+    await updateDoc(docRef, { ...data, updatedAt: serverTimestamp() });
+    return;
+  } catch (err1: any) {
+    const isPermissionErr =
+      err1?.code === "permission-denied" ||
+      err1?.message?.includes("permissions");
+    if (!isPermissionErr) throw err1;
+
+    try {
+      await updateDoc(docRef, data);
+      return;
+    } catch {
+      const withoutVolume = { ...data };
+      delete withoutVolume.volumeNumber;
+      try {
+        await updateDoc(docRef, withoutVolume);
+        return;
+      } catch {
+        if (uid) {
+          try {
+            await updateDoc(docRef, { ...data, userId: uid });
+            return;
+          } catch {
+            throw err1;
+          }
+        }
+        throw err1;
+      }
+    }
+  }
+};
+
+const STATUS_ORDER: Record<Status, number> = { reading: 0, unread: 1, read: 2 };
+
+const STATUS_TERMS: Record<Status, string[]> = {
+  unread: ["unread", "to read", "toread", "da leggere", "non letto", "non letta", "non letti", "non lette", "da iniziare", "nuovo", "nuovi"],
+  reading: ["reading", "in lettura", "inlettura", "leggendo", "in progress", "in corso", "lettura", "iniziato", "iniziata"],
+  read: ["read", "finished", "completed", "letto", "letta", "letti", "lette", "finito", "finita", "finiti", "finite", "completato", "completata", "completati"],
+};
+
+const CATEGORY_TERMS: Record<Category, string[]> = {
+  book: ["book", "books", "libro", "libri", "classic", "classico", "classici", "romanzo", "romanzi"],
+  manga: ["manga", "fumetto", "fumetti", "comic", "comics", "anime"],
+  gdr: ["gdr", "rpg", "gioco di ruolo", "giochi di ruolo", "role playing"],
+};
+
+const normalize = (s: string) =>
+  s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+const csvEscape = (v: any) => {
+  const s = v === undefined || v === null ? "" : String(v);
+  return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+const downloadFile = (content: string, filename: string, type: string) => {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+type ViewMode = "shelf" | "library" | "dashboard" | "wishlist";
+type StatusFilter = "all" | Status | "loaned";
+
+interface ToastState {
+  id: number;
+  message: string;
+  submessage?: string;
+  variant: "success" | "error" | "info";
+  action?: { label: string; onClick: () => void };
+}
+
+const readStorage = (key: string, fallback: string) => {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+const writeStorage = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // storage unavailable (private mode): ignore
+  }
+};
+
+const SkeletonGrid = () => (
+  <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6" aria-busy="true" aria-label="Caricamento libreria">
+    {Array.from({ length: 10 }).map((_, i) => (
+      <div key={i} className="glass-card p-4 rounded-2xl flex sm:flex-col gap-4 animate-pulse">
+        <div className="w-20 h-28 sm:w-full sm:h-auto sm:aspect-[2/3] rounded-xl bg-white/5" />
+        <div className="flex-1 space-y-2">
+          <div className="h-3 rounded bg-white/10 w-3/4" />
+          <div className="h-2.5 rounded bg-white/5 w-1/2" />
+          <div className="h-2.5 rounded bg-white/5 w-1/3" />
+        </div>
+      </div>
+    ))}
+  </div>
+);
+
 // --- Main App ---
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [isDark, setIsDark] = useState(true);
-  useEffect(() => { document.documentElement.classList.toggle("dark", isDark); }, [isDark]);
-  const [view, setView] = useState<"shelf" | "library" | "dashboard" | "wishlist">("library");
+  useEffect(() => {
+    document.documentElement.classList.add("dark");
+  }, []);
+  const [view, setView] = useState<ViewMode>(() => {
+    const saved = readStorage("nerdshelf_view", "library");
+    return (["shelf", "library", "dashboard", "wishlist"].includes(saved) ? saved : "library") as ViewMode;
+  });
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<LibraryItem[]>([]);
+  const [itemsLoaded, setItemsLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<string>("all");
-  const [sortBy, setSortBy] = useState<SortOption>(() => {
-    return (localStorage.getItem("nerdshelf_sort") as SortOption) || "date";
-  });
-  
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [sortBy, setSortBy] = useState<SortOption>(
+    () => readStorage("nerdshelf_sort", "date") as SortOption,
+  );
+  const [groupBySeries, setGroupBySeries] = useState(
+    () => readStorage("nerdshelf_group", "0") === "1",
+  );
+  const [collapsedSeries, setCollapsedSeries] = useState<Record<string, boolean>>({});
+
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false);
   const [alertConfig, setAlertConfig] = useState<{
@@ -2818,33 +3628,50 @@ export default function App() {
     message: string;
     onConfirm?: () => void;
     showCancel?: boolean;
-  }>({
-    isOpen: false,
-    title: "",
-    message: "",
-  });
+  }>({ isOpen: false, title: "", message: "" });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<LibraryItem | null>(null);
-  const [selectedItemDetails, setSelectedItemDetails] =
-    useState<LibraryItem | null>(null);
+  const [newItemPreset, setNewItemPreset] = useState<Partial<LibraryItem> | null>(null);
+  const [detailsId, setDetailsId] = useState<string | null>(null);
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
-  const [groupBySeries, setGroupBySeries] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkEditModalOpen, setIsBulkEditModalOpen] = useState(false);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false);
-  const [toast, setToast] = useState<{ message: string; submessage?: string } | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const toastTimer = React.useRef<number | undefined>(undefined);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
 
-  const showToast = (message: string, submessage?: string) => {
-    setToast({ message, submessage });
-    setTimeout(() => {
-      setToast((curr) => (curr?.message === message ? null : curr));
-    }, 4000);
-  };
+  const showToast = React.useCallback(
+    (
+      message: string,
+      submessage?: string,
+      variant: ToastState["variant"] = "success",
+      action?: ToastState["action"],
+    ) => {
+      const id = Date.now();
+      setToast({ id, message, submessage, variant, action });
+      window.clearTimeout(toastTimer.current);
+      toastTimer.current = window.setTimeout(
+        () => setToast((curr) => (curr?.id === id ? null : curr)),
+        action ? 6000 : 4000,
+      );
+    },
+    [],
+  );
 
+  // Route Firestore errors to a toast instead of crashing the app.
   useEffect(() => {
-    localStorage.setItem("nerdshelf_sort", sortBy);
-  }, [sortBy]);
+    firestoreErrorListener = (info) =>
+      showToast(describeFirestoreError(info), info.error.slice(0, 140), "error");
+    return () => {
+      firestoreErrorListener = null;
+    };
+  }, [showToast]);
+
+  useEffect(() => writeStorage("nerdshelf_sort", sortBy), [sortBy]);
+  useEffect(() => writeStorage("nerdshelf_view", view), [view]);
+  useEffect(() => writeStorage("nerdshelf_group", groupBySeries ? "1" : "0"), [groupBySeries]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -2857,6 +3684,7 @@ export default function App() {
   useEffect(() => {
     if (!user) {
       setItems([]);
+      setItemsLoaded(false);
       return;
     }
 
@@ -2866,333 +3694,222 @@ export default function App() {
       orderBy("createdAt", "desc"),
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as LibraryItem[];
-      setItems(data);
-    });
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const data = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as LibraryItem[];
+        setItems(data);
+        setItemsLoaded(true);
+      },
+      (error) => {
+        setItemsLoaded(true);
+        handleFirestoreError(error, OperationType.LIST, "libraryItems");
+      },
+    );
 
     return unsubscribe;
   }, [user]);
 
   // Connection test
   useEffect(() => {
-    const testConnection = async () => {
-      try {
-        await getDocFromServer(doc(db, "test", "connection"));
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          error.message.includes("the client is offline")
-        ) {
-          console.error("Firebase connection error: check your configuration.");
-        }
+    getDocFromServer(doc(db, "test", "connection")).catch((error) => {
+      if (error instanceof Error && error.message.includes("the client is offline")) {
+        console.error("Firebase connection error: check your configuration.");
       }
-    };
-    testConnection();
+    });
   }, []);
 
+  // Selection is scoped to the current view.
+  useEffect(() => {
+    setSelectedIds([]);
+    setIsSelectionMode(false);
+    setIsFilterMenuOpen(false);
+  }, [view]);
+
+  const selectedItemDetails = useMemo(
+    () => (detailsId ? items.find((i) => i.id === detailsId) || null : null),
+    [detailsId, items],
+  );
+
+  // Close details if the item disappears (e.g. deleted from another device).
+  useEffect(() => {
+    if (detailsId && itemsLoaded && !items.some((i) => i.id === detailsId)) {
+      setDetailsId(null);
+    }
+  }, [detailsId, items, itemsLoaded]);
+
+  const viewItems = useMemo(
+    () => items.filter((i) => (view === "wishlist" ? i.isWishlist : !i.isWishlist)),
+    [items, view],
+  );
+
   const allTags = useMemo(() => {
-    const tags = new Set<string>();
-    items.forEach((item) => {
-      if (item.tags) {
-        item.tags.forEach((t) => tags.add(t));
-      }
-    });
-    return Array.from(tags).sort();
-  }, [items]);
+    const counts = new Map<string, number>();
+    viewItems.forEach((item) => (item.tags || []).forEach((t) => counts.set(t, (counts.get(t) || 0) + 1)));
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([t]) => t);
+  }, [viewItems]);
+
+  const categoryCounts = useMemo(() => {
+    const c: Record<string, number> = { all: viewItems.length, book: 0, manga: 0, gdr: 0 };
+    viewItems.forEach((i) => (c[i.category] = (c[i.category] || 0) + 1));
+    return c;
+  }, [viewItems]);
+
+  // Reset a tag filter that no longer exists in the current view.
+  useEffect(() => {
+    if (!["all", "book", "manga", "gdr"].includes(filter) && !allTags.includes(filter)) {
+      setFilter("all");
+    }
+  }, [allTags, filter]);
 
   const filteredItems = useMemo(() => {
-    const rawSearch = search.trim().toLowerCase();
+    const rawSearch = normalize(search.trim());
 
-    // Multilingual & common search terms for statuses (e.g. 'Letto', 'Da Leggere', 'In Lettura')
-    const statusTermsMap: Record<Status, string[]> = {
-      unread: [
-        "unread",
-        "to read",
-        "toread",
-        "da leggere",
-        "non letto",
-        "non letta",
-        "non letti",
-        "non lette",
-        "da iniziare",
-        "nuovo",
-        "nuovi",
-      ],
-      reading: [
-        "reading",
-        "in lettura",
-        "inlettura",
-        "leggendo",
-        "in progress",
-        "in corso",
-        "lettura",
-        "iniziato",
-        "iniziata",
-      ],
-      read: [
-        "read",
-        "finished",
-        "completed",
-        "letto",
-        "letta",
-        "letti",
-        "lette",
-        "finito",
-        "finita",
-        "finiti",
-        "finite",
-        "completato",
-        "completata",
-        "completati",
-      ],
-    };
-
-    const categoryTermsMap: Record<Category, string[]> = {
-      book: ["book", "books", "libro", "libri", "classic", "classico", "classici", "romanzo", "romanzi"],
-      manga: ["manga", "fumetto", "fumetti", "comic", "comics", "anime"],
-      gdr: ["gdr", "rpg", "gioco di ruolo", "giochi di ruolo", "role playing"],
-    };
-
-    let result = items.filter((item) => {
-      let matchesSearch = true;
+    const result = viewItems.filter((item) => {
       if (rawSearch) {
-        const itemStatusTerms = statusTermsMap[item.status] || [];
-        const itemCatTerms = categoryTermsMap[item.category] || [];
-
-        // Full searchable corpus for this item
-        const corpus = [
-          item.title,
-          item.author,
-          item.seriesName || "",
-          item.genre || "",
-          item.notes || "",
-          item.description || "",
-          item.review || "",
-          item.isbn || "",
-          item.system || "",
-          item.status,
-          ...itemStatusTerms,
-          item.category,
-          ...itemCatTerms,
-          ...(item.tags || []),
-          item.loanedTo ? `loaned prestato ${item.loanedTo}` : "",
-        ]
-          .join(" ")
-          .toLowerCase();
-
-        // 1. Exact phrase/substring match (e.g. "da leggere", "in lettura")
-        if (corpus.includes(rawSearch)) {
-          matchesSearch = true;
-        } else {
-          // 2. Multi-token match: all typed terms must be present in the item corpus
+        const corpus = normalize(
+          [
+            item.title,
+            item.author,
+            item.seriesName || "",
+            item.genre || "",
+            item.notes || "",
+            item.description || "",
+            item.review || "",
+            item.isbn || "",
+            item.system || "",
+            item.status,
+            ...(STATUS_TERMS[item.status] || []),
+            item.category,
+            ...(CATEGORY_TERMS[item.category] || []),
+            ...(item.tags || []),
+            item.loanedTo ? `loaned prestato prestito ${item.loanedTo}` : "",
+            getVolume(item) !== undefined ? `vol ${getVolume(item)} volume ${getVolume(item)}` : "",
+          ].join(" "),
+        );
+        if (!corpus.includes(rawSearch)) {
           const tokens = rawSearch.split(/\s+/).filter(Boolean);
-          matchesSearch = tokens.length > 0 && tokens.every((tok) => corpus.includes(tok));
+          if (!(tokens.length > 0 && tokens.every((tok) => corpus.includes(tok)))) return false;
         }
       }
 
-      let matchesFilter = true;
       if (filter !== "all") {
         if (["book", "manga", "gdr"].includes(filter)) {
-          matchesFilter = item.category === filter;
-        } else {
-          matchesFilter = !!(item.tags && item.tags.includes(filter));
+          if (item.category !== filter) return false;
+        } else if (!(item.tags && item.tags.includes(filter))) {
+          return false;
         }
       }
 
-      const matchesView =
-        view === "wishlist" ? item.isWishlist : !item.isWishlist;
-      return matchesSearch && matchesFilter && matchesView;
+      if (statusFilter === "loaned") {
+        if (!item.loanedTo) return false;
+      } else if (statusFilter !== "all" && item.status !== statusFilter) {
+        return false;
+      }
+      return true;
     });
+
+    const createdTime = (i: LibraryItem) => toDate(i.createdAt)?.getTime() ?? Date.now();
+    const bySeries = (a: LibraryItem, b: LibraryItem) => {
+      const cmp = (a.seriesName || a.title).localeCompare(b.seriesName || b.title, undefined, { numeric: true });
+      if (cmp !== 0) return cmp;
+      return (getVolume(a) ?? 0) - (getVolume(b) ?? 0);
+    };
 
     return result.sort((a, b) => {
-      if (sortBy === "title") return a.title.localeCompare(b.title);
-      if (sortBy === "series") {
-         const sa = a.seriesName || a.title;
-         const sb = b.seriesName || b.title;
-         const cmp = sa.localeCompare(sb);
-         if (cmp !== 0) return cmp;
-         return (a.volumeNumber || 0) - (b.volumeNumber || 0);
+      switch (sortBy) {
+        case "title":
+          return a.title.localeCompare(b.title, undefined, { numeric: true });
+        case "series":
+          return bySeries(a, b);
+        case "author":
+          return (a.author || "").localeCompare(b.author || "") || bySeries(a, b);
+        case "status":
+          return (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) || bySeries(a, b);
+        case "volume":
+          return (getVolume(a) ?? Infinity) - (getVolume(b) ?? Infinity) || bySeries(a, b);
+        case "rating":
+          return (b.rating || 0) - (a.rating || 0) || bySeries(a, b);
+        default:
+          return createdTime(b) - createdTime(a);
       }
-      if (sortBy === "author") return a.author.localeCompare(b.author);
-      if (sortBy === "status") return a.status.localeCompare(b.status);
-      if (sortBy === "volume") {
-        const volA = parseFloat(a.totalVolumes || "0");
-        const volB = parseFloat(b.totalVolumes || "0");
-        if (!isNaN(volA) && !isNaN(volB)) {
-          if (volA !== volB) return volA - volB;
-        }
-        return (a.totalVolumes || "").localeCompare(b.totalVolumes || "");
-      }
-      return 0;
     });
-  }, [items, search, filter, sortBy, view]);
+  }, [viewItems, search, filter, statusFilter, sortBy]);
 
   const groupedItems = useMemo(() => {
     const groups: Record<string, LibraryItem[]> = {};
     const standalone: LibraryItem[] = [];
-
     filteredItems.forEach((item) => {
       if (item.seriesName) {
-        if (!groups[item.seriesName]) groups[item.seriesName] = [];
-        groups[item.seriesName].push(item);
+        (groups[item.seriesName] ||= []).push(item);
       } else {
         standalone.push(item);
       }
     });
+    const seriesList = Object.entries(groups)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, list]) => {
+        const sorted = [...list].sort((a, b) => (getVolume(a) ?? 0) - (getVolume(b) ?? 0));
+        // Missing-volume detection uses the whole collection, not just matches.
+        const allOwned = items.filter((i) => i.seriesName === name && !i.isWishlist);
+        const volumes = allOwned.map(getVolume).filter((v): v is number => v !== undefined);
+        const wished = new Set(
+          items
+            .filter((i) => i.seriesName === name && i.isWishlist)
+            .map(getVolume)
+            .filter((v): v is number => v !== undefined),
+        );
+        return {
+          name,
+          items: sorted,
+          readCount: list.filter((i) => i.status === "read").length,
+          missing: view === "wishlist" ? [] : findMissingVolumes(volumes).filter((v) => !wished.has(v)),
+          nextVolume: volumes.length ? Math.max(...volumes) + 1 : undefined,
+          sample: sorted[0],
+        };
+      });
+    return { seriesList, standalone };
+  }, [filteredItems, items, view]);
 
-    return { groups, standalone };
-  }, [filteredItems]);
+  const totalSelectedPrice = useMemo(
+    () =>
+      items
+        .filter((item) => selectedIds.includes(item.id))
+        .reduce((sum, item) => sum + (Number(item.price) || 0), 0),
+    [items, selectedIds],
+  );
 
-  const totalSelectedPrice = useMemo(() => {
-    return items
-      .filter((item) => selectedIds.includes(item.id))
-      .reduce((sum, item) => sum + (item.price || 0), 0);
-  }, [items, selectedIds]);
+  const activeFilterCount =
+    (filter !== "all" ? 1 : 0) + (statusFilter !== "all" ? 1 : 0) + (search.trim() ? 1 : 0);
 
-  // Helper to sanitize payload and remove ghost / empty / invalid fields
-  const sanitizeLibraryItemPayload = (raw: any, isUpdate = false) => {
-    const result: Record<string, any> = {};
-
-    // Required core fields
-    if (typeof raw.title === "string" && raw.title.trim()) {
-      result.title = raw.title.trim();
-    }
-    if (typeof raw.author === "string" && raw.author.trim()) {
-      result.author = raw.author.trim();
-    }
-    if (["book", "manga", "gdr"].includes(raw.category)) {
-      result.category = raw.category;
-    } else if (!isUpdate) {
-      result.category = "book";
-    }
-    if (["unread", "reading", "read"].includes(raw.status)) {
-      result.status = raw.status;
-    } else if (!isUpdate) {
-      result.status = "unread";
-    }
-
-    // Optional string fields: only included if non-empty trimmed string
-    const optionalStrings = [
-      "genre",
-      "isbn",
-      "totalVolumes",
-      "system",
-      "coverUrl",
-      "seriesName",
-      "loanedTo",
-      "description",
-      "notes",
-      "review",
-    ];
-    for (const field of optionalStrings) {
-      if (typeof raw[field] === "string" && raw[field].trim().length > 0) {
-        result[field] = raw[field].trim();
-      }
-    }
-
-    // Optional number fields: only included if valid number
-    if (raw.price !== "" && raw.price !== null && raw.price !== undefined) {
-      const p = parseFloat(String(raw.price));
-      if (!isNaN(p) && p >= 0) result.price = p;
-    }
-
-    if (raw.totalPages !== "" && raw.totalPages !== null && raw.totalPages !== undefined) {
-      const tp = parseInt(String(raw.totalPages), 10);
-      if (!isNaN(tp) && tp > 0) result.totalPages = tp;
-    }
-
-    if (raw.pagesRead !== "" && raw.pagesRead !== null && raw.pagesRead !== undefined) {
-      const pr = parseInt(String(raw.pagesRead), 10);
-      if (!isNaN(pr) && pr >= 0) result.pagesRead = pr;
-    }
-
-    if (raw.rating !== "" && raw.rating !== null && raw.rating !== undefined) {
-      const r = parseInt(String(raw.rating), 10);
-      if (!isNaN(r) && r > 0 && r <= 5) result.rating = r;
-    }
-
-    if (raw.volumeNumber !== "" && raw.volumeNumber !== null && raw.volumeNumber !== undefined) {
-      const vn = parseInt(String(raw.volumeNumber), 10);
-      if (!isNaN(vn) && vn > 0) result.volumeNumber = vn;
-    }
-
-    // Boolean
-    if (raw.isWishlist === true) {
-      result.isWishlist = true;
-    } else if (raw.isWishlist === false) {
-      result.isWishlist = false;
-    }
-
-    // Loan Date
-    if (raw.loanDate && result.loanedTo) {
-      result.loanDate = raw.loanDate;
-    }
-
-    // Tags
-    if (Array.isArray(raw.tags) && raw.tags.length > 0) {
-      const cleanTags = raw.tags
-        .map((t: any) => String(t).trim())
-        .filter((t: string) => t.length > 0);
-      if (cleanTags.length > 0) {
-        result.tags = cleanTags;
-      }
-    }
-
-    // NEVER include id, volumeCount, userId, or createdAt in standard updates
-    delete result.id;
-    delete result.volumeCount;
-    delete result.userId;
-    delete result.createdAt;
-
-    return result;
+  const resetFilters = () => {
+    setFilter("all");
+    setStatusFilter("all");
+    setSearch("");
   };
 
-  // Safe update that gracefully handles both strict rules (requiring updatedAt)
-  // and schema-restricted rules (disallowing unknown fields or timestamps)
-  const safeUpdateDoc = async (docRef: any, data: any) => {
-    // Attempt 1: with updatedAt: serverTimestamp()
-    try {
-      await updateDoc(docRef, {
-        ...data,
-        updatedAt: serverTimestamp(),
-      });
-      return;
-    } catch (err1: any) {
-      const isPermissionErr =
-        err1?.code === "permission-denied" ||
-        err1?.message?.includes("Missing or insufficient permissions") ||
-        err1?.message?.includes("permissions");
-      if (!isPermissionErr) throw err1;
+  // --- Actions ---
 
-      // Attempt 2: without updatedAt (in case rule rejects updatedAt)
-      try {
-        await updateDoc(docRef, data);
-        return;
-      } catch (err2: any) {
-        // Attempt 3: without volumeNumber (in case rule rejects volumeNumber)
-        const withoutVolume = { ...data };
-        delete withoutVolume.volumeNumber;
-        try {
-          await updateDoc(docRef, withoutVolume);
-          return;
-        } catch (err3: any) {
-          // Attempt 4: with explicit userId (in case rule requires incoming().userId)
-          if (user) {
-            try {
-              await updateDoc(docRef, { ...data, userId: user.uid });
-              return;
-            } catch (err4) {
-              throw err1;
-            }
-          }
-          throw err1;
-        }
-      }
-    }
+  const openNewItem = (preset?: Partial<LibraryItem>) => {
+    setEditingItem(null);
+    setNewItemPreset(
+      preset ?? {
+        isWishlist: view === "wishlist",
+        ...(["book", "manga", "gdr"].includes(filter) ? { category: filter as Category } : {}),
+      },
+    );
+    setIsModalOpen(true);
+  };
+
+  const openEditItem = (item: LibraryItem) => {
+    setNewItemPreset(null);
+    setEditingItem(item);
+    setIsModalOpen(true);
   };
 
   const handleSaveItem = async (data: any) => {
@@ -3200,135 +3917,101 @@ export default function App() {
 
     if (Array.isArray(data)) {
       try {
-        const promises = data.map((item) => {
-          const clean = sanitizeLibraryItemPayload(item, false);
-          return addDoc(collection(db, "libraryItems"), {
-            ...clean,
-            userId: user.uid,
-            createdAt: serverTimestamp(),
+        for (let i = 0; i < data.length; i += 450) {
+          const batch = writeBatch(db);
+          data.slice(i, i + 450).forEach((entry) => {
+            const clean = sanitizeLibraryItemPayload(entry, false);
+            batch.set(doc(collection(db, "libraryItems")), {
+              ...clean,
+              userId: user.uid,
+              createdAt: serverTimestamp(),
+            });
           });
-        });
-        await Promise.all(promises);
+          await batch.commit();
+        }
+        showToast(`${data.length} volumi aggiunti`, data[0]?.seriesName || data[0]?.title);
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, "libraryItems");
       }
       return;
     }
 
-    const isEditing = Boolean(editingItem);
-    const cleanData = sanitizeLibraryItemPayload(data, isEditing);
-
+    const target = editingItem;
     try {
-      if (editingItem) {
-        await safeUpdateDoc(doc(db, "libraryItems", editingItem.id), cleanData);
+      if (target) {
+        await safeUpdateDoc(
+          doc(db, "libraryItems", target.id),
+          sanitizeLibraryItemPayload(data, true),
+          user.uid,
+        );
+        showToast("Modifiche salvate", data.title);
       } else {
         await addDoc(collection(db, "libraryItems"), {
-          ...cleanData,
+          ...sanitizeLibraryItemPayload(data, false),
           userId: user.uid,
           createdAt: serverTimestamp(),
         });
+        showToast(
+          data.isWishlist ? "Aggiunto alla wishlist" : "Aggiunto alla collezione",
+          data.title,
+        );
       }
     } catch (error) {
       handleFirestoreError(
         error,
-        editingItem ? OperationType.UPDATE : OperationType.CREATE,
+        target ? OperationType.UPDATE : OperationType.CREATE,
         "libraryItems",
       );
     }
   };
 
-  const handleUpdateStatus = async (id: string, status: Status) => {
+  const handlePatch = async (id: string, patch: Partial<LibraryItem>) => {
+    const payload: Record<string, any> = { ...patch };
+    if ("rating" in patch && !patch.rating) payload.rating = deleteField();
     try {
-      await safeUpdateDoc(doc(db, "libraryItems", id), { status });
-      if (selectedItemDetails?.id === id) {
-        setSelectedItemDetails((prev) => (prev ? { ...prev, status } : null));
-      }
+      await safeUpdateDoc(doc(db, "libraryItems", id), payload, user?.uid);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${id}`);
     }
   };
 
-  const handleUpdatePages = async (id: string, pagesRead: number) => {
+  const handleUpdateLoan = async (id: string, loanedTo: string, loanDate: Date | null) => {
+    const updates: any = loanedTo
+      ? { loanedTo, loanDate }
+      : { loanedTo: deleteField(), loanDate: deleteField() };
     try {
-      await safeUpdateDoc(doc(db, "libraryItems", id), { pagesRead });
-      if (selectedItemDetails?.id === id) {
-        setSelectedItemDetails((prev) =>
-          prev ? { ...prev, pagesRead } : null,
-        );
-      }
+      await safeUpdateDoc(doc(db, "libraryItems", id), updates, user?.uid);
+      showToast(loanedTo ? `Prestato a ${loanedTo}` : "Segnato come restituito");
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${id}`);
     }
-  };
-
-  const handleUpdateLoan = async (
-    id: string,
-    loanedTo: string,
-    loanDate: Date | null,
-  ) => {
-    try {
-      const updates: any = {};
-      if (loanedTo) {
-        updates.loanedTo = loanedTo;
-        updates.loanDate = loanDate;
-      } else {
-        updates.loanedTo = deleteField();
-        updates.loanDate = deleteField();
-      }
-
-      await safeUpdateDoc(doc(db, "libraryItems", id), updates);
-      if (selectedItemDetails?.id === id) {
-        setSelectedItemDetails((prev) => {
-          if (!prev) return null;
-          const next = { ...prev };
-          if (loanedTo) {
-            next.loanedTo = loanedTo;
-            next.loanDate = loanDate;
-          } else {
-            delete next.loanedTo;
-            delete next.loanDate;
-          }
-          return next;
-        });
-      }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${id}`);
-    }
-  };
-
-  const handleDeleteItem = async (id: string) => {
-    setItemToDelete(id);
   };
 
   const confirmDelete = async () => {
     if (!itemToDelete) return;
+    const id = itemToDelete;
+    const title = items.find((i) => i.id === id)?.title;
+    setItemToDelete(null);
+    if (detailsId === id) setDetailsId(null);
     try {
-      await deleteDoc(doc(db, "libraryItems", itemToDelete));
-      setItemToDelete(null);
+      await deleteDoc(doc(db, "libraryItems", id));
+      showToast("Elemento eliminato", title, "info");
     } catch (error) {
-      handleFirestoreError(
-        error,
-        OperationType.DELETE,
-        `libraryItems/${itemToDelete}`,
-      );
+      handleFirestoreError(error, OperationType.DELETE, `libraryItems/${id}`);
     }
   };
 
   const handleMarkAsBought = async (item: LibraryItem) => {
     try {
-      await safeUpdateDoc(doc(db, "libraryItems", item.id), {
-        isWishlist: false,
-        status: item.status || "unread",
-      });
-      if (selectedItemDetails && selectedItemDetails.id === item.id) {
-        setSelectedItemDetails((prev) =>
-          prev ? { ...prev, isWishlist: false, status: item.status || "unread" } : null,
-        );
-      }
-      showToast(
-        `"${item.title}" segnato come comprato!`,
-        "Spostato con successo dalla wishlist alla tua libreria 📚",
+      await safeUpdateDoc(
+        doc(db, "libraryItems", item.id),
+        { isWishlist: false, status: item.status || "unread" },
+        user?.uid,
       );
+      showToast(`"${item.title}" comprato!`, "Spostato dalla wishlist alla libreria 📚", "success", {
+        label: "Annulla",
+        onClick: () => handlePatch(item.id, { isWishlist: true }),
+      });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `libraryItems/${item.id}`);
     }
@@ -3336,18 +4019,15 @@ export default function App() {
 
   const handleBulkMarkAsBought = async () => {
     if (selectedIds.length === 0) return;
+    const ids = [...selectedIds];
     try {
-      const promises = selectedIds.map((id) =>
-        safeUpdateDoc(doc(db, "libraryItems", id), {
-          isWishlist: false,
-          status: "unread",
-        }),
+      await Promise.all(
+        ids.map((id) => safeUpdateDoc(doc(db, "libraryItems", id), { isWishlist: false }, user?.uid)),
       );
-      await Promise.all(promises);
-      showToast(
-        `${selectedIds.length} libri segnati come comprati!`,
-        "Spostati con successo nella tua libreria personale 📚",
-      );
+      showToast(`${ids.length} elementi comprati!`, "Spostati nella tua libreria 📚", "success", {
+        label: "Annulla",
+        onClick: () => ids.forEach((id) => handlePatch(id, { isWishlist: true })),
+      });
       setSelectedIds([]);
       setIsSelectionMode(false);
     } catch (error) {
@@ -3356,131 +4036,221 @@ export default function App() {
   };
 
   const toggleSelection = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
-    );
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
   };
 
-  const handleBulkUpdate = async (updates: any) => {
+  const handleSelectAll = () => {
+    const visibleIds = filteredItems.map((i) => i.id);
+    const allSelected = visibleIds.every((id) => selectedIds.includes(id));
+    setSelectedIds(allSelected ? [] : visibleIds);
+  };
+
+  const handleBulkUpdate = async (updates: any, addTag?: string) => {
+    const ids = [...selectedIds];
     try {
-      const promises = selectedIds.map((id) =>
-        safeUpdateDoc(doc(db, "libraryItems", id), updates),
+      await Promise.all(
+        ids.map((id) => {
+          const patch = { ...updates };
+          if (addTag) {
+            const current = items.find((i) => i.id === id)?.tags || [];
+            if (!current.includes(addTag)) patch.tags = [...current, addTag];
+          }
+          if (patch.status === "read") {
+            const it = items.find((i) => i.id === id);
+            if (it?.totalPages) patch.pagesRead = it.totalPages;
+          }
+          return safeUpdateDoc(doc(db, "libraryItems", id), patch, user?.uid);
+        }),
       );
-      await Promise.all(promises);
+      showToast(`${ids.length} elementi aggiornati`);
       setSelectedIds([]);
-      setIsBulkEditModalOpen(false);
+      setIsSelectionMode(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, "bulk");
     }
   };
 
   const handleBulkDelete = async () => {
+    const ids = [...selectedIds];
+    setIsBulkDeleteConfirmOpen(false);
     try {
-      const promises = selectedIds.map((id) =>
-        deleteDoc(doc(db, "libraryItems", id)),
-      );
-      await Promise.all(promises);
+      for (let i = 0; i < ids.length; i += 450) {
+        const batch = writeBatch(db);
+        ids.slice(i, i + 450).forEach((id) => batch.delete(doc(db, "libraryItems", id)));
+        await batch.commit();
+      }
+      showToast(`${ids.length} elementi eliminati`, undefined, "info");
       setSelectedIds([]);
       setIsSelectionMode(false);
-      setIsBulkDeleteConfirmOpen(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, "bulk");
     }
   };
 
-  const showAlert = (
-    title: string,
-    message: string,
-    onConfirm?: () => void,
-    showCancel = false,
-  ) => {
+  const showAlert = (title: string, message: string, onConfirm?: () => void, showCancel = false) => {
     setAlertConfig({ isOpen: true, title, message, onConfirm, showCancel });
   };
 
+  const backupDate = () => new Date().toISOString().split("T")[0];
+
   const handleExportData = () => {
-    const data = JSON.stringify(items, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `nerdshelf_backup_${new Date().toISOString().split("T")[0]}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const serializable = items.map(({ createdAt, loanDate, ...rest }) => ({
+      ...rest,
+      createdAt: toDate(createdAt)?.toISOString(),
+      ...(loanDate ? { loanDate: toDate(loanDate)?.toISOString() } : {}),
+    }));
+    downloadFile(
+      JSON.stringify(serializable, null, 2),
+      `nerdshelf_backup_${backupDate()}.json`,
+      "application/json",
+    );
+    showToast("Backup esportato", `${items.length} elementi salvati in JSON`);
+  };
+
+  const handleExportCsv = () => {
+    const columns: [string, (i: LibraryItem) => any][] = [
+      ["Titolo", (i) => i.title],
+      ["Autore", (i) => i.author],
+      ["Categoria", (i) => CATEGORY_LABELS[i.category]],
+      ["Serie", (i) => i.seriesName],
+      ["Volume", (i) => getVolume(i)],
+      ["Stato", (i) => ({ unread: "Da leggere", reading: "In lettura", read: "Finito" })[i.status]],
+      ["Wishlist", (i) => (i.isWishlist ? "Sì" : "No")],
+      ["Pagine lette", (i) => i.pagesRead],
+      ["Pagine totali", (i) => i.totalPages],
+      ["Prezzo", (i) => (i.price !== undefined ? Number(i.price).toFixed(2) : "")],
+      ["Voto", (i) => i.rating],
+      ["Genere", (i) => i.genre],
+      ["Sistema", (i) => i.system],
+      ["ISBN", (i) => i.isbn],
+      ["Tag", (i) => (i.tags || []).join(", ")],
+      ["Prestato a", (i) => i.loanedTo],
+      ["Data prestito", (i) => formatDate(i.loanDate)],
+      ["Aggiunto il", (i) => formatDate(i.createdAt)],
+    ];
+    const rows = [
+      columns.map(([h]) => h).join(";"),
+      ...items.map((item) => columns.map(([, get]) => csvEscape(get(item))).join(";")),
+    ];
+    // BOM so Excel opens UTF-8 (accents) correctly.
+    downloadFile("﻿" + rows.join("\n"), `nerdshelf_${backupDate()}.csv`, "text/csv;charset=utf-8");
+    showToast("CSV esportato", "Apribile con Excel, Numbers o Google Sheets");
   };
 
   const handleImportData = () => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "application/json";
+    input.accept = "application/json,.json";
     input.onchange = async (e: any) => {
-      const file = e.target.files[0];
+      const file = e.target.files?.[0];
       if (!file || !user) return;
 
       const reader = new FileReader();
       reader.onload = async (event: any) => {
+        let parsed: any;
         try {
-          const importedItems = JSON.parse(event.target.result);
-          if (!Array.isArray(importedItems)) {
-            showAlert(
-              "Import Error",
-              "Invalid backup file format. Must be an array of items.",
-            );
-            return;
-          }
-
-          const performImport = async () => {
-            const libraryRef = collection(db, "libraryItems");
-
-            // Firestore batches have a limit of 500 operations
-            const chunks = [];
-            for (let i = 0; i < importedItems.length; i += 500) {
-              chunks.push(importedItems.slice(i, i + 500));
-            }
-
-            try {
-              for (const chunk of chunks) {
-                const batch = writeBatch(db);
-                chunk.forEach((item: any) => {
-                  const { id, createdAt, userId, ...cleanItem } = item;
-                  const newDocRef = doc(libraryRef);
-                  batch.set(newDocRef, {
-                    ...cleanItem,
-                    userId: user.uid,
-                    createdAt: serverTimestamp(),
-                  });
-                });
-                await batch.commit();
-              }
-              showAlert("Success", "Library imported successfully!");
-            } catch (err) {
-              console.error(err);
-              showAlert(
-                "Import Failed",
-                "There was an error saving the imported data to the database.",
-              );
-            }
-          };
-
-          showAlert(
-            "Import Confirmation",
-            `Import ${importedItems.length} items? This will add them to your current library.`,
-            performImport,
-            true,
-          );
+          parsed = JSON.parse(event.target.result);
         } catch (err) {
           console.error(err);
-          showAlert(
-            "Parse Error",
-            "The file content could not be read as valid JSON.",
-          );
+          showAlert("File non valido", "Il contenuto del file non è un JSON valido.");
+          return;
         }
+        if (!Array.isArray(parsed)) {
+          showAlert("Formato non valido", "Il backup deve contenere un elenco di elementi.");
+          return;
+        }
+
+        const key = (i: any) =>
+          `${normalize(String(i.title || ""))}|${getVolume(i) ?? ""}|${i.category || "book"}|${i.isWishlist ? 1 : 0}`;
+        const existing = new Set(items.map(key));
+        const valid = parsed
+          .filter((i) => i && typeof i.title === "string" && i.title.trim())
+          .map((i) => ({ raw: i, clean: sanitizeLibraryItemPayload(i, false) }));
+        const fresh = valid.filter(({ raw }) => !existing.has(key(raw)));
+        const skippedDup = valid.length - fresh.length;
+        const skippedInvalid = parsed.length - valid.length;
+
+        if (fresh.length === 0) {
+          showAlert(
+            "Niente da importare",
+            skippedDup
+              ? `Tutti i ${skippedDup} elementi sono già presenti nella tua libreria.`
+              : "Il file non contiene elementi validi.",
+          );
+          return;
+        }
+
+        const performImport = async () => {
+          try {
+            for (let i = 0; i < fresh.length; i += 450) {
+              const batch = writeBatch(db);
+              fresh.slice(i, i + 450).forEach(({ clean }) => {
+                batch.set(doc(collection(db, "libraryItems")), {
+                  ...clean,
+                  userId: user.uid,
+                  createdAt: serverTimestamp(),
+                });
+              });
+              await batch.commit();
+            }
+            showToast("Importazione completata", `${fresh.length} elementi aggiunti`);
+          } catch (err) {
+            console.error(err);
+            showAlert("Importazione fallita", "Errore durante il salvataggio dei dati importati.");
+          }
+        };
+
+        const notes = [
+          skippedDup ? `${skippedDup} già presenti verranno saltati.` : "",
+          skippedInvalid ? `${skippedInvalid} senza titolo verranno ignorati.` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+        showAlert(
+          "Conferma importazione",
+          `Importare ${fresh.length} elementi nella tua libreria?${notes ? `\n\n${notes}` : ""}`,
+          performImport,
+          true,
+        );
       };
       reader.readAsText(file);
     };
     input.click();
   };
+
+  // --- Keyboard shortcuts: "/" search, "n" new item ---
+  const anyModalOpen =
+    isModalOpen || !!detailsId || !!itemToDelete || isBulkEditModalOpen || isBulkDeleteConfirmOpen || alertConfig.isOpen;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (anyModalOpen || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement;
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) || target.isContentEditable) {
+        if (e.key === "Escape" && target === searchInputRef.current) {
+          setSearch("");
+          target.blur();
+        }
+        return;
+      }
+      if (e.key === "/") {
+        e.preventDefault();
+        if (view === "dashboard") setView("library");
+        searchInputRef.current?.focus();
+      } else if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        openNewItem();
+      } else if (e.key === "Escape") {
+        setIsFilterMenuOpen(false);
+        setIsProfileMenuOpen(false);
+        if (isSelectionMode) {
+          setIsSelectionMode(false);
+          setSelectedIds([]);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
 
   if (loading)
     return (
@@ -3491,184 +4261,391 @@ export default function App() {
 
   if (!user) return <AuthScreen />;
 
+  const renderCard = (item: LibraryItem) => (
+    <ItemCard
+      key={item.id}
+      item={item}
+      onOpenDetails={(it) => setDetailsId(it.id)}
+      onEdit={openEditItem}
+      onMarkAsBought={handleMarkAsBought}
+      isSelected={selectedIds.includes(item.id)}
+      onSelect={toggleSelection}
+      selectionMode={isSelectionMode}
+    />
+  );
+
+  const gridClass = "grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6";
+
+  const viewTabs: { id: ViewMode; label: string; icon: typeof Book }[] = [
+    { id: "library", label: "Griglia", icon: LayoutGrid },
+    { id: "shelf", label: "Scaffale", icon: Layers },
+    { id: "dashboard", label: "Statistiche", icon: BarChart3 },
+    { id: "wishlist", label: "Wishlist", icon: Heart },
+  ];
+
+  const statusOptions: { id: StatusFilter; label: string }[] = [
+    { id: "all", label: "Tutti" },
+    { id: "reading", label: "In lettura" },
+    { id: "unread", label: "Da leggere" },
+    { id: "read", label: "Finiti" },
+    { id: "loaned", label: "In prestito" },
+  ];
+
+  const libraryIsEmpty = itemsLoaded && viewItems.length === 0;
+
+  const filterBar = (
+    <div className="space-y-3">
+      <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 pb-1">
+        <CategoryChip
+          label={`Tutto · ${categoryCounts.all}`}
+          active={filter === "all"}
+          onClick={() => setFilter("all")}
+          colorClass="bg-white text-zinc-900 border-white"
+        />
+        <CategoryChip
+          label={`Libri · ${categoryCounts.book}`}
+          active={filter === "book"}
+          onClick={() => setFilter(filter === "book" ? "all" : "book")}
+          colorClass="bg-amber-500/20 text-amber-300 border-amber-500/40"
+        />
+        <CategoryChip
+          label={`Manga · ${categoryCounts.manga}`}
+          active={filter === "manga"}
+          onClick={() => setFilter(filter === "manga" ? "all" : "manga")}
+          colorClass="bg-purple-500/20 text-purple-300 border-purple-500/40"
+        />
+        <CategoryChip
+          label={`GDR · ${categoryCounts.gdr}`}
+          active={filter === "gdr"}
+          onClick={() => setFilter(filter === "gdr" ? "all" : "gdr")}
+          colorClass="bg-red-500/20 text-red-300 border-red-500/40"
+        />
+        {allTags.length > 0 && <div className="w-px bg-white/10 shrink-0 my-1" />}
+        {allTags.map((tag) => (
+          <CategoryChip
+            key={tag}
+            label={`#${tag}`}
+            active={filter === tag}
+            onClick={() => setFilter(filter === tag ? "all" : tag)}
+            colorClass="bg-sky-500/20 text-sky-300 border-sky-500/40"
+          />
+        ))}
+      </div>
+      <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
+        {statusOptions.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => setStatusFilter(s.id)}
+            aria-pressed={statusFilter === s.id}
+            className={cn(
+              "px-3 py-1 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all",
+              statusFilter === s.id
+                ? "bg-white/15 text-white"
+                : "text-zinc-500 hover:text-zinc-200 hover:bg-white/5",
+            )}
+          >
+            {s.label}
+          </button>
+        ))}
+        <span className="ml-auto text-[11px] text-zinc-500 whitespace-nowrap pl-2">
+          {filteredItems.length} {filteredItems.length === 1 ? "elemento" : "elementi"}
+        </span>
+        {activeFilterCount > 0 && (
+          <button
+            onClick={resetFilters}
+            className="text-[11px] font-semibold text-[var(--color-brand-orange)] hover:underline whitespace-nowrap"
+          >
+            Azzera filtri
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  const emptyState = libraryIsEmpty ? (
+    <motion.div
+      key="empty-library"
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="glass-card rounded-3xl p-8 sm:p-12 text-center space-y-5 max-w-xl mx-auto"
+    >
+      <div className="inline-flex p-5 rounded-full bg-white/5">
+        {view === "wishlist" ? (
+          <Heart className="w-10 h-10 text-rose-400/60" />
+        ) : (
+          <Logo className="w-12 h-12" />
+        )}
+      </div>
+      <div className="space-y-2">
+        <h2 className="text-2xl font-serif font-bold text-white">
+          {view === "wishlist" ? "La wishlist è vuota" : "Il tuo scaffale ti aspetta"}
+        </h2>
+        <p className="text-sm text-zinc-400">
+          {view === "wishlist"
+            ? "Aggiungi i libri, manga e manuali che vorresti comprare: quando li acquisti, un tap e finiscono in libreria."
+            : "Aggiungi il tuo primo libro, manga o manuale GDR. Puoi anche scansionare l'ISBN o importare un backup."}
+        </p>
+      </div>
+      <div className="flex flex-col sm:flex-row gap-2 justify-center">
+        <button
+          onClick={() => openNewItem()}
+          className={cn(
+            "px-5 py-3 font-bold rounded-xl inline-flex items-center justify-center gap-2 transition-all active:scale-95",
+            view === "wishlist" ? "bg-rose-600 hover:bg-rose-500 text-white" : "bg-white hover:bg-zinc-200 text-zinc-900",
+          )}
+        >
+          <Plus className="w-4 h-4" />
+          {view === "wishlist" ? "Aggiungi un desiderio" : "Aggiungi il primo"}
+        </button>
+        {view !== "wishlist" && (
+          <button
+            onClick={handleImportData}
+            className="px-5 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-200 font-semibold rounded-xl inline-flex items-center justify-center gap-2"
+          >
+            <Upload className="w-4 h-4" />
+            Importa backup
+          </button>
+        )}
+      </div>
+    </motion.div>
+  ) : (
+    <motion.div
+      key="empty-state"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      className="text-center py-16 space-y-4"
+    >
+      <div className="inline-flex p-6 rounded-full bg-white/5 text-zinc-600">
+        <Search className="w-10 h-10" />
+      </div>
+      <div className="space-y-1">
+        <p className="text-zinc-300 font-medium">
+          {search ? `Nessun risultato per "${search}"` : "Nessun elemento corrisponde ai filtri"}
+        </p>
+        <p className="text-zinc-500 text-xs">
+          Puoi cercare per titolo, autore, serie, tag o stato (es. "letto", "da leggere", "prestato").
+        </p>
+      </div>
+      <button
+        onClick={resetFilters}
+        className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all"
+      >
+        Azzera filtri
+      </button>
+    </motion.div>
+  );
+
   return (
-    <div className="min-h-screen pb-24 relative overflow-hidden">
-      {/* Dynamic Background Effects */}
+    <div className="min-h-screen pb-28 sm:pb-24 relative overflow-x-hidden">
+      {/* Background */}
       <div className="fixed inset-0 pointer-events-none z-[-1] overflow-hidden">
         <div className="absolute top-[-20%] left-[-10%] w-[50vw] h-[50vw] bg-purple-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50"></div>
         <div className="absolute bottom-[-20%] right-[-10%] w-[50vw] h-[50vw] bg-red-900/20 rounded-full blur-[120px] mix-blend-screen opacity-50"></div>
         <div className="absolute top-[40%] left-[60%] w-[30vw] h-[30vw] bg-blue-900/10 rounded-full blur-[100px] mix-blend-screen opacity-30"></div>
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] mix-blend-overlay"></div>
       </div>
+
+      {/* Click-outside layer for dropdowns */}
+      {(isFilterMenuOpen || isProfileMenuOpen) && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => {
+            setIsFilterMenuOpen(false);
+            setIsProfileMenuOpen(false);
+          }}
+        />
+      )}
+
       {/* Header */}
-      <header className="fixed top-0 left-0 right-0 z-50 w-full bg-[#0b0b0d]/80 backdrop-blur-xl border-b border-white/10 shadow-lg">
+      <header className="fixed top-0 left-0 right-0 z-50 w-full bg-[#0b0b0d]/80 backdrop-blur-xl border-b border-white/10 shadow-lg pt-[env(safe-area-inset-top)]">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3">
-          <div className="flex items-center justify-between gap-4">
-            
-            {/* Logo */}
-            <div className="flex items-center space-x-3 shrink-0">
+          <div className="flex items-center justify-between gap-3 sm:gap-4">
+            <button
+              onClick={() => setView("library")}
+              className="flex items-center space-x-3 shrink-0"
+              aria-label="NerdShelf, vai alla libreria"
+            >
               <Logo className="w-8 h-8" />
               <h1 className="text-xl font-serif font-bold text-white hidden sm:block">
                 Nerd<span className="text-[var(--color-brand-orange)]">Shelf</span>
               </h1>
-            </div>
+            </button>
 
-            {/* Search Bar - Fixed & always visible */}
+            {/* Search */}
             <div className="flex-1 max-w-2xl relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 pointer-events-none" />
               <input
-                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-9 text-base sm:text-sm text-white focus:outline-none focus:border-[var(--color-brand-orange)] focus:bg-white/10 transition-all placeholder-zinc-500"
-                placeholder="Search title, author, or status ('Letto', 'Da Leggere')..."
+                ref={searchInputRef}
+                type="search"
+                aria-label="Cerca nella libreria"
+                className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-14 text-base sm:text-sm text-white focus:outline-none focus:border-[var(--color-brand-orange)] focus:bg-white/10 transition-all placeholder-zinc-500 [&::-webkit-search-cancel-button]:hidden"
+                placeholder="Cerca titolo, autore, serie, tag..."
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  if (view === "dashboard") setView("library");
+                }}
               />
-              {search && (
+              {search ? (
                 <button
-                  onClick={() => setSearch("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors"
-                  title="Clear search"
+                  onClick={() => {
+                    setSearch("");
+                    searchInputRef.current?.focus();
+                  }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors p-1"
+                  aria-label="Cancella ricerca"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
+              ) : (
+                <kbd className="hidden sm:block absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono text-zinc-500 border border-white/10 rounded px-1.5 py-0.5">
+                  /
+                </kbd>
               )}
             </div>
 
             {/* Actions */}
-            <div className="flex items-center space-x-2 shrink-0 relative">
-              
-              {/* Wishlist Button */}
-              <button
-                onClick={() => setView(view === "wishlist" ? "library" : "wishlist")}
-                className={cn(
-                  "p-2.5 rounded-xl border transition-all flex items-center space-x-2 cursor-pointer",
-                  view === "wishlist"
-                    ? "bg-rose-500/20 border-rose-500/40 text-rose-300 shadow-lg shadow-rose-950/40"
-                    : "bg-transparent border-transparent hover:bg-white/5 text-zinc-400 hover:text-white"
-                )}
-                title={view === "wishlist" ? "Torna alla Libreria" : "Vai alla Wishlist"}
-              >
-                <Heart className={cn("w-5 h-5", view === "wishlist" && "fill-rose-400")} />
-                <span className="hidden lg:block text-xs font-bold uppercase tracking-widest">
-                  Wishlist
-                </span>
-              </button>
-
-              {/* Filters Button */}
+            <div className="flex items-center space-x-1 sm:space-x-2 shrink-0 relative">
               <button
                 onClick={() => {
                   setIsFilterMenuOpen(!isFilterMenuOpen);
                   setIsProfileMenuOpen(false);
                 }}
+                aria-expanded={isFilterMenuOpen}
+                aria-label="Ordina e visualizza"
                 className={cn(
-                  "p-2.5 rounded-xl border transition-all flex items-center space-x-2",
-                  isFilterMenuOpen || search || isSelectionMode || sortBy !== 'date'
+                  "p-2.5 rounded-xl border transition-all flex items-center space-x-2 relative z-50",
+                  isFilterMenuOpen || isSelectionMode || sortBy !== "date" || groupBySeries
                     ? "bg-white/10 border-white/30 text-white"
-                    : "bg-transparent border-transparent hover:bg-white/5 text-zinc-400 hover:text-white"
+                    : "bg-transparent border-transparent hover:bg-white/5 text-zinc-400 hover:text-white",
                 )}
-                title="Filters & Display"
+                title="Ordina e visualizza"
               >
                 <Filter className="w-5 h-5" />
-                <span className="hidden md:block text-xs font-bold uppercase tracking-widest">Filter</span>
+                <span className="hidden md:block text-xs font-bold uppercase tracking-widest">Ordina</span>
               </button>
 
-              {/* Profile / Menu Button */}
               <button
                 onClick={() => {
                   setIsProfileMenuOpen(!isProfileMenuOpen);
                   setIsFilterMenuOpen(false);
                 }}
+                aria-expanded={isProfileMenuOpen}
+                aria-label="Menu profilo"
                 className={cn(
-                  "p-2.5 rounded-xl border transition-all",
+                  "p-1.5 rounded-xl border transition-all relative z-50",
                   isProfileMenuOpen
                     ? "bg-white/10 border-white/30 text-white"
-                    : "bg-transparent border-transparent hover:bg-white/5 text-zinc-400 hover:text-white"
+                    : "bg-transparent border-transparent hover:bg-white/5 text-zinc-400 hover:text-white",
                 )}
               >
-                <UserIcon className="w-5 h-5" />
+                {user.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    className="w-7 h-7 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-7 h-7 flex items-center justify-center">
+                    <UserIcon className="w-5 h-5" />
+                  </div>
+                )}
               </button>
 
-              {/* Filters Dropdown */}
               {isFilterMenuOpen && (
-                <div className="absolute top-full right-12 mt-2 w-64 bg-[#121215] border border-white/10 rounded-2xl shadow-2xl p-4 z-50 flex flex-col gap-4">
+                <div className="absolute top-full right-0 sm:right-12 mt-2 w-64 bg-[#121215] border border-white/10 rounded-2xl shadow-2xl p-4 z-50 flex flex-col gap-4">
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Sort By</label>
+                    <label htmlFor="sort-select" className="text-[10px] uppercase font-bold text-zinc-500 tracking-widest">
+                      Ordina per
+                    </label>
                     <select
+                      id="sort-select"
                       value={sortBy}
                       onChange={(e) => setSortBy(e.target.value as SortOption)}
                       className="w-full bg-white/5 border border-white/10 text-sm font-bold text-white rounded-lg px-3 py-2 focus:outline-none"
                     >
-                      <option value="date" className="bg-zinc-900">Newest</option>
-                      <option value="title" className="bg-zinc-900">Title</option>
-                      <option value="author" className="bg-zinc-900">Author</option>
-                      <option value="status" className="bg-zinc-900">Status</option>
-                      <option value="volume" className="bg-zinc-900">Volume</option>
-                      <option value="series" className="bg-zinc-900">Series</option>
+                      <option value="date" className="bg-zinc-900">Più recenti</option>
+                      <option value="title" className="bg-zinc-900">Titolo</option>
+                      <option value="author" className="bg-zinc-900">Autore</option>
+                      <option value="series" className="bg-zinc-900">Serie e volume</option>
+                      <option value="status" className="bg-zinc-900">Stato di lettura</option>
+                      <option value="volume" className="bg-zinc-900">Numero volume</option>
+                      <option value="rating" className="bg-zinc-900">Voto</option>
                     </select>
                   </div>
-                  <div className="space-y-2 pt-2 border-t border-white/5">
+                  <div className="space-y-1 pt-2 border-t border-white/5">
                     <button
                       onClick={() => setGroupBySeries(!groupBySeries)}
                       className={cn(
                         "w-full flex items-center justify-between p-2 rounded-lg transition-all",
-                        groupBySeries ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white"
+                        groupBySeries ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white",
                       )}
                     >
                       <div className="flex items-center space-x-2">
                         <Layers className="w-4 h-4" />
-                        <span className="text-sm font-bold">Group by Series</span>
+                        <span className="text-sm font-bold">Raggruppa per serie</span>
                       </div>
-                      {groupBySeries && <CheckCircle2 className="w-4 h-4 text-[var(--color-brand-orange)]" />}
+                      {groupBySeries && <Check className="w-4 h-4 text-[var(--color-brand-orange)]" />}
                     </button>
                     <button
                       onClick={() => {
                         setIsSelectionMode(!isSelectionMode);
                         if (isSelectionMode) setSelectedIds([]);
+                        else if (view === "dashboard") setView("library");
+                        setIsFilterMenuOpen(false);
                       }}
                       className={cn(
                         "w-full flex items-center justify-between p-2 rounded-lg transition-all",
-                        isSelectionMode ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white"
+                        isSelectionMode ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white",
                       )}
                     >
                       <div className="flex items-center space-x-2">
-                        <CheckCircle2 className="w-4 h-4" />
-                        <span className="text-sm font-bold">Selection Mode</span>
+                        <ListChecks className="w-4 h-4" />
+                        <span className="text-sm font-bold">Selezione multipla</span>
                       </div>
-                      {isSelectionMode && <CheckCircle2 className="w-4 h-4 text-[var(--color-brand-orange)]" />}
+                      {isSelectionMode && <Check className="w-4 h-4 text-[var(--color-brand-orange)]" />}
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* Profile Menu Dropdown */}
               {isProfileMenuOpen && (
-                <div className="absolute top-full right-0 mt-2 w-64 bg-[#121215] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
-                  <div className="p-2 space-y-1 border-b border-white/5">
-                    <div className="px-3 py-2 text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Views</div>
-                    <button onClick={() => { setView('shelf'); setIsProfileMenuOpen(false); }} className={cn("w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all", view === 'shelf' ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white")}>
-                      <Layers className="w-4 h-4" /> <span className="text-sm font-bold">Shelf View</span>
-                    </button>
-                    <button onClick={() => { setView('library'); setIsProfileMenuOpen(false); }} className={cn("w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all", view === 'library' ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white")}>
-                      <Book className="w-4 h-4" /> <span className="text-sm font-bold">Grid View</span>
-                    </button>
-                    <button onClick={() => { setView('dashboard'); setIsProfileMenuOpen(false); }} className={cn("w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all", view === 'dashboard' ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white")}>
-                      <Settings className="w-4 h-4" /> <span className="text-sm font-bold">Statistics</span>
-                    </button>
-                    <button onClick={() => { setView('wishlist'); setIsProfileMenuOpen(false); }} className={cn("w-full flex items-center space-x-3 px-3 py-2 rounded-lg transition-all", view === 'wishlist' ? "bg-white/10 text-white" : "text-zinc-400 hover:bg-white/5 hover:text-white")}>
-                      <Heart className="w-4 h-4" /> <span className="text-sm font-bold">Wishlist</span>
-                    </button>
+                <div className="absolute top-full right-0 mt-2 w-72 bg-[#121215] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
+                  <div className="p-4 border-b border-white/5 flex items-center gap-3">
+                    {user.photoURL ? (
+                      <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="w-10 h-10 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+                        <UserIcon className="w-5 h-5 text-zinc-400" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-white truncate">{user.displayName || "Lettore"}</p>
+                      <p className="text-[11px] text-zinc-500 truncate">
+                        {items.filter((i) => !i.isWishlist).length} in libreria · {items.filter((i) => i.isWishlist).length} in wishlist
+                      </p>
+                    </div>
                   </div>
                   <div className="p-2 space-y-1 border-b border-white/5">
-                    <div className="px-3 py-2 text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Data</div>
+                    <div className="px-3 py-2 text-[10px] uppercase font-bold text-zinc-500 tracking-widest">Dati</div>
                     <button onClick={() => { handleExportData(); setIsProfileMenuOpen(false); }} className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-all">
-                      <Download className="w-4 h-4" /> <span className="text-sm font-bold">Export Backup</span>
+                      <Download className="w-4 h-4" /> <span className="text-sm font-bold">Esporta backup (JSON)</span>
+                    </button>
+                    <button onClick={() => { handleExportCsv(); setIsProfileMenuOpen(false); }} className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-all">
+                      <FileSpreadsheet className="w-4 h-4" /> <span className="text-sm font-bold">Esporta foglio (CSV)</span>
                     </button>
                     <button onClick={() => { handleImportData(); setIsProfileMenuOpen(false); }} className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-all">
-                      <Upload className="w-4 h-4" /> <span className="text-sm font-bold">Import Backup</span>
+                      <Upload className="w-4 h-4" /> <span className="text-sm font-bold">Importa backup</span>
                     </button>
+                  </div>
+                  <div className="hidden sm:block px-5 py-3 border-b border-white/5 text-[11px] text-zinc-500 space-y-1">
+                    <div className="flex justify-between"><span>Cerca</span><kbd className="font-mono text-zinc-400">/</kbd></div>
+                    <div className="flex justify-between"><span>Nuovo elemento</span><kbd className="font-mono text-zinc-400">N</kbd></div>
+                    <div className="flex justify-between"><span>Chiudi / annulla</span><kbd className="font-mono text-zinc-400">Esc</kbd></div>
                   </div>
                   <div className="p-2">
                     <button onClick={() => signOut(auth)} className="w-full flex items-center space-x-3 px-3 py-2 rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all">
-                      <LogOut className="w-4 h-4" /> <span className="text-sm font-bold">Logout</span>
+                      <LogOut className="w-4 h-4" /> <span className="text-sm font-bold">Esci</span>
                     </button>
                   </div>
                 </div>
@@ -3679,371 +4656,265 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto pt-24 min-h-screen">
+      <main className="max-w-6xl mx-auto pt-[calc(5rem+env(safe-area-inset-top))] sm:pt-24 min-h-screen">
+        {/* Desktop view tabs */}
+        <nav className="hidden sm:flex px-6 pt-2" aria-label="Viste">
+          <div className="flex bg-white/5 p-1 rounded-xl border border-white/10">
+            {viewTabs.map((tab) => {
+              const TabIcon = tab.icon;
+              const active = view === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setView(tab.id)}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all",
+                    active
+                      ? tab.id === "wishlist"
+                        ? "bg-rose-500/20 text-rose-200"
+                        : "bg-white text-zinc-900"
+                      : "text-zinc-400 hover:text-white hover:bg-white/5",
+                  )}
+                >
+                  <TabIcon className={cn("w-4 h-4", active && tab.id === "wishlist" && "fill-rose-400")} />
+                  {tab.label}
+                  {tab.id === "wishlist" && items.some((i) => i.isWishlist) && (
+                    <span className="text-[10px] font-mono opacity-70">
+                      {items.filter((i) => i.isWishlist).length}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+
         {view === "dashboard" ? (
-          <Dashboard items={items} />
-        ) : view === "shelf" ? (
-          <ShelfView 
-             items={filteredItems} 
-             onEdit={(item) => {
-               setEditingItem(item);
-               setIsModalOpen(true);
-             }}
-             onOpenDetails={(item) => setSelectedItemDetails(item)}
-          />
+          <Dashboard items={items} onOpenDetails={(it) => setDetailsId(it.id)} />
         ) : (
-          <div className="p-6 space-y-6">
-            {/* Real-time search feedback indicator */}
-            {search && (
-              <div className="flex items-center justify-between p-3.5 bg-white/5 border border-white/10 rounded-2xl">
-                <div className="flex items-center space-x-2 text-sm text-zinc-300">
-                  <Search className="w-4 h-4 text-[var(--color-brand-orange)]" />
-                  <span>
-                    Results for <strong className="text-white">"{search}"</strong>
-                  </span>
-                  <span className="text-xs bg-white/10 text-zinc-400 px-2 py-0.5 rounded-full font-mono">
-                    {filteredItems.length} found
-                  </span>
+          <div className="p-4 sm:p-6 space-y-6">
+            {view === "wishlist" && !libraryIsEmpty && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-gradient-to-r from-rose-950/40 via-purple-950/20 to-zinc-900/80 border border-rose-500/20 rounded-2xl shadow-xl">
+                <div className="flex items-center space-x-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0">
+                    <Heart className="w-6 h-6 fill-rose-500/30" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-serif font-bold text-white flex items-center gap-2 flex-wrap">
+                      <span>La tua wishlist</span>
+                      <span className="text-xs font-mono font-normal px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                        {viewItems.length}
+                        {viewItems.some((i) => i.price)
+                          ? ` · ${formatPrice(viewItems.reduce((s, i) => s + (Number(i.price) || 0), 0))}`
+                          : ""}
+                      </span>
+                    </h2>
+                    <p className="text-xs text-zinc-400 mt-1">
+                      Quando acquisti qualcosa, premi <strong className="text-emerald-400 font-semibold">"Segna come comprato"</strong> per spostarlo in libreria.
+                    </p>
+                  </div>
                 </div>
                 <button
-                  onClick={() => setSearch("")}
-                  className="text-xs text-zinc-400 hover:text-white flex items-center gap-1 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                  onClick={() => openNewItem({ isWishlist: true })}
+                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 shadow-lg shadow-rose-950/50 transition-all active:scale-95 shrink-0"
                 >
-                  <X className="w-3.5 h-3.5" />
-                  <span>Clear Search</span>
+                  <Plus className="w-4 h-4" />
+                  <span>Aggiungi alla wishlist</span>
                 </button>
               </div>
             )}
 
-            {/* Dedicated Wishlist Header Banner */}
-            {view === "wishlist" && (
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-gradient-to-r from-rose-950/40 via-purple-950/20 to-zinc-900/80 border border-rose-500/20 rounded-2xl shadow-xl">
-                <div className="flex items-center space-x-3.5">
-                  <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 shrink-0 shadow-inner">
-                    <Heart className="w-6 h-6 fill-rose-500/30" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-serif font-bold text-white flex items-center gap-2">
-                      <span>La tua Wishlist</span>
-                      <span className="text-xs font-mono font-normal px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                        {filteredItems.length} {filteredItems.length === 1 ? "libro" : "libri"}
-                      </span>
-                    </h2>
-                    <p className="text-xs text-zinc-400 mt-1">
-                      Clicca sul tasto rapido <strong className="text-emerald-400 font-semibold">"Comprato"</strong> su qualsiasi scheda per spostare immediatamente il libro nella tua libreria!
-                    </p>
-                  </div>
-                </div>
+            {!libraryIsEmpty && itemsLoaded && filterBar}
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => {
-                      setEditingItem({
-                        id: "",
-                        title: "",
-                        author: "",
-                        category: "book",
-                        status: "unread",
-                        isWishlist: true,
-                      } as any);
-                      setIsModalOpen(true);
-                    }}
-                    className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-lg shadow-rose-950/50 transition-all cursor-pointer active:scale-95"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Aggiungi alla Wishlist</span>
-                  </button>
-                  <button
-                    onClick={() => setView("library")}
-                    className="px-3.5 py-2 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white text-xs font-semibold rounded-xl border border-white/10 transition-all cursor-pointer"
-                  >
-                    Torna alla Libreria
-                  </button>
-                </div>
+            {!itemsLoaded ? (
+              <SkeletonGrid />
+            ) : filteredItems.length === 0 ? (
+              emptyState
+            ) : view === "shelf" ? (
+              <ShelfView
+                items={filteredItems}
+                onEdit={openEditItem}
+                onOpenDetails={(it) => setDetailsId(it.id)}
+              />
+            ) : groupBySeries ? (
+              <div className="space-y-10">
+                {groupedItems.seriesList.map((series) => {
+                  const collapsed = !!collapsedSeries[series.name];
+                  return (
+                    <section key={`series-${series.name}`} className="space-y-4">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <button
+                          onClick={() =>
+                            setCollapsedSeries((prev) => ({ ...prev, [series.name]: !collapsed }))
+                          }
+                          aria-expanded={!collapsed}
+                          className="flex items-center gap-3 min-w-0 group/series"
+                        >
+                          <div className="p-2 bg-white/5 rounded-lg border border-white/10 group-hover/series:bg-white/10">
+                            <ChevronRight className={cn("w-4 h-4 text-zinc-400 transition-transform", !collapsed && "rotate-90")} />
+                          </div>
+                          <h2 className="text-lg font-serif font-bold text-white truncate">{series.name}</h2>
+                        </button>
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                          {series.items.length} {series.items.length === 1 ? "volume" : "volumi"}
+                          {view !== "wishlist" && ` · ${series.readCount} letti`}
+                        </span>
+                        {series.missing.length > 0 && (
+                          <span
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20"
+                            title="Volumi mancanti nella tua collezione (esclusi quelli già in wishlist)"
+                          >
+                            Mancano: {compressRanges(series.missing)}
+                          </span>
+                        )}
+                        <button
+                          onClick={() =>
+                            openNewItem({
+                              seriesName: series.name,
+                              category: series.sample?.category,
+                              author: series.sample?.author,
+                              isWishlist: view === "wishlist",
+                              volumeNumber: series.missing[0] ?? series.nextVolume,
+                            })
+                          }
+                          className="ml-auto text-[11px] font-semibold text-zinc-400 hover:text-white flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-white/5"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          {series.missing[0] ?? series.nextVolume
+                            ? `Aggiungi vol. ${series.missing[0] ?? series.nextVolume}`
+                            : "Aggiungi volume"}
+                        </button>
+                      </div>
+                      {!collapsed && <div className={gridClass}>{series.items.map(renderCard)}</div>}
+                    </section>
+                  );
+                })}
+
+                {groupedItems.standalone.length > 0 && (
+                  <section className="space-y-4">
+                    {groupedItems.seriesList.length > 0 && (
+                      <div className="flex items-center space-x-3">
+                        <div className="p-2 bg-white/5 rounded-lg border border-white/10">
+                          <Book className="w-4 h-4 text-zinc-500" />
+                        </div>
+                        <h2 className="text-lg font-serif font-bold text-white">Volumi singoli</h2>
+                      </div>
+                    )}
+                    <div className={gridClass}>{groupedItems.standalone.map(renderCard)}</div>
+                  </section>
+                )}
+              </div>
+            ) : (
+              <div className={gridClass}>
+                <AnimatePresence mode="popLayout">{filteredItems.map(renderCard)}</AnimatePresence>
               </div>
             )}
-
-            <AnimatePresence mode="popLayout">
-              {groupBySeries ? (
-                <motion.div key="grouped-view" className="space-y-10">
-                  {/* Series Groups */}
-                  {Object.entries(groupedItems.groups).map(
-                    ([seriesName, seriesItems]) => {
-                      const items = seriesItems as LibraryItem[];
-                      return (
-                        <div key={`series-${seriesName}`} className="space-y-4">
-                          <div className="flex items-center space-x-3">
-                            <div className="p-2 bg-white/5 rounded-lg border border-white/10">
-                              <Layers className="w-4 h-4 text-zinc-500" />
-                            </div>
-                            <h2 className="text-lg font-serif font-bold text-white">
-                              {seriesName}
-                            </h2>
-                            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                              {items.length} items
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                            {items.map((item) => (
-                              <ItemCard
-                                key={item.id}
-                                item={item}
-                                onOpenDetails={(item) =>
-                                  setSelectedItemDetails(item)
-                                }
-                                onEdit={(item) => {
-                                  setEditingItem(item);
-                                  setIsModalOpen(true);
-                                }}
-                                onMarkAsBought={handleMarkAsBought}
-                                isSelected={selectedIds.includes(item.id)}
-                                onSelect={toggleSelection}
-                                selectionMode={isSelectionMode}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    },
-                  )}
-
-                  {/* Standalone Items */}
-                  {groupedItems.standalone.length > 0 && (
-                    <div key="standalone-group" className="space-y-4">
-                      {Object.keys(groupedItems.groups).length > 0 && (
-                        <div className="flex items-center space-x-3">
-                          <div className="p-2 bg-white/5 rounded-lg border border-white/10">
-                            <Book className="w-4 h-4 text-zinc-500" />
-                          </div>
-                          <h2 className="text-lg font-serif font-bold text-white">
-                            Single Volumes
-                          </h2>
-                        </div>
-                      )}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                        {groupedItems.standalone.map((item) => (
-                          <ItemCard
-                            key={item.id}
-                            item={item}
-                            onOpenDetails={(item) =>
-                              setSelectedItemDetails(item)
-                            }
-                            onEdit={(item) => {
-                              setEditingItem(item);
-                              setIsModalOpen(true);
-                            }}
-                            onMarkAsBought={handleMarkAsBought}
-                            isSelected={selectedIds.includes(item.id)}
-                            onSelect={toggleSelection}
-                            selectionMode={isSelectionMode}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="flat-view"
-                  className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6"
-                >
-                  {filteredItems.map((item) => (
-                    <ItemCard
-                      key={item.id}
-                      item={item}
-                      onOpenDetails={(item) => setSelectedItemDetails(item)}
-                      onEdit={(item) => {
-                        setEditingItem(item);
-                        setIsModalOpen(true);
-                      }}
-                      onMarkAsBought={handleMarkAsBought}
-                      isSelected={selectedIds.includes(item.id)}
-                      onSelect={toggleSelection}
-                      selectionMode={isSelectionMode}
-                    />
-                  ))}
-                </motion.div>
-              )}
-
-              {filteredItems.length === 0 && (
-                <motion.div
-                  key="empty-state"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="text-center py-20 space-y-4"
-                >
-                  <div className="inline-flex p-6 rounded-full bg-white/5 text-zinc-700">
-                    {view === "wishlist" ? (
-                      <Heart className="w-12 h-12 text-rose-500/40" />
-                    ) : (
-                      <Filter className="w-12 h-12" />
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-zinc-400 font-medium">
-                      {search
-                        ? `No treasures found matching "${search}"`
-                        : view === "wishlist"
-                        ? "La tua wishlist è vuota. Aggiungi i libri che desideri acquistare o leggere in futuro!"
-                        : "No treasures found in this section."}
-                    </p>
-                    {search && (
-                      <p className="text-zinc-500 text-xs">
-                        Tip: You can search by title, author, category, or read status (e.g. 'Letto', 'Da Leggere').
-                      </p>
-                    )}
-                  </div>
-                  {search ? (
-                    <button
-                      onClick={() => setSearch("")}
-                      className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
-                    >
-                      Clear Search
-                    </button>
-                  ) : view === "wishlist" ? (
-                    <button
-                      onClick={() => {
-                        setEditingItem({
-                          id: "",
-                          title: "",
-                          author: "",
-                          category: "book",
-                          status: "unread",
-                          isWishlist: true,
-                        } as any);
-                        setIsModalOpen(true);
-                      }}
-                      className="px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-lg transition-all inline-flex items-center gap-1.5 cursor-pointer active:scale-95"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Aggiungi alla Wishlist</span>
-                    </button>
-                  ) : null}
-                </motion.div>
-              )}
-            </AnimatePresence>
           </div>
         )}
       </main>
 
       {/* Mobile Nav */}
-      <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-white/10 px-4 py-4 flex justify-between items-center z-40">
-        <button
-          onClick={() => {
-            window.scrollTo({ top: 0, behavior: "smooth" });
-            setView("library");
-            // Focus search input after a short delay to allow scroll/view change
-            setTimeout(() => {
-              const searchInput = document.querySelector(
-                "header input",
-              ) as HTMLInputElement;
-              if (searchInput) searchInput.focus();
-            }, 500);
-          }}
-          className="flex flex-col items-center space-y-1 text-zinc-500 hover:text-white transition-colors"
-        >
-          <Search className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">
-            Search
-          </span>
-        </button>
+      <nav
+        className="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950/95 backdrop-blur-xl border-t border-white/10 px-2 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] grid grid-cols-5 items-end z-40"
+        aria-label="Navigazione"
+      >
+        {[
+          { id: "library" as ViewMode, label: "Griglia", icon: LayoutGrid },
+          { id: "shelf" as ViewMode, label: "Scaffale", icon: Layers },
+        ].map((tab) => {
+          const TabIcon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setView(tab.id)}
+              aria-current={view === tab.id ? "page" : undefined}
+              className={cn(
+                "flex flex-col items-center gap-1 py-1",
+                view === tab.id ? "text-white" : "text-zinc-500",
+              )}
+            >
+              <TabIcon className="w-6 h-6" />
+              <span className="text-[10px] font-bold uppercase tracking-wider">{tab.label}</span>
+            </button>
+          );
+        })}
 
         <button
-          onClick={() => setView("shelf")}
-          className={cn(
-            "flex flex-col items-center space-y-1",
-            view === "shelf" ? "text-white" : "text-zinc-500",
-          )}
+          onClick={() => openNewItem()}
+          className="flex flex-col items-center -mt-7"
+          aria-label="Aggiungi elemento"
         >
-          <Layers className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">
-            Shelf
-          </span>
-        </button>
-        <button
-          onClick={() => setView("library")}
-          className={cn(
-            "flex flex-col items-center space-y-1",
-            view === "library" ? "text-white" : "text-zinc-500",
-          )}
-        >
-          <Book className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">
-            Grid
-          </span>
-        </button>
-
-        <button
-          onClick={() => {
-            setEditingItem(null);
-            setIsModalOpen(true);
-          }}
-          className="flex flex-col items-center -mt-8"
-        >
-          <div className="w-14 h-14 bg-white text-zinc-900 rounded-full shadow-2xl flex items-center justify-center border-4 border-black">
+          <div
+            className={cn(
+              "w-14 h-14 rounded-full shadow-2xl flex items-center justify-center border-4 border-zinc-950 active:scale-95 transition-transform",
+              view === "wishlist" ? "bg-rose-600 text-white" : "bg-white text-zinc-900",
+            )}
+          >
             <Plus className="w-7 h-7" />
           </div>
-          <span className="text-[10px] font-bold uppercase tracking-widest mt-1 text-white">
-            Add
-          </span>
+          <span className="text-[10px] font-bold uppercase tracking-wider mt-1 text-white">Aggiungi</span>
         </button>
 
-        <button
-          onClick={() => setView("dashboard")}
-          className={cn(
-            "flex flex-col items-center space-y-1",
-            view === "dashboard" ? "text-white" : "text-zinc-500",
-          )}
-        >
-          <Sparkles className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">
-            Stats
-          </span>
-        </button>
-
-        <button
-          onClick={() => setView("wishlist")}
-          className={cn(
-            "flex flex-col items-center space-y-1",
-            view === "wishlist" ? "text-white" : "text-zinc-500",
-          )}
-        >
-          <Heart className="w-6 h-6" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">
-            Wishlist
-          </span>
-        </button>
-      </div>
+        {[
+          { id: "dashboard" as ViewMode, label: "Stats", icon: BarChart3 },
+          { id: "wishlist" as ViewMode, label: "Wishlist", icon: Heart },
+        ].map((tab) => {
+          const TabIcon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setView(tab.id)}
+              aria-current={view === tab.id ? "page" : undefined}
+              className={cn(
+                "flex flex-col items-center gap-1 py-1",
+                view === tab.id ? (tab.id === "wishlist" ? "text-rose-300" : "text-white") : "text-zinc-500",
+              )}
+            >
+              <TabIcon className={cn("w-6 h-6", view === "wishlist" && tab.id === "wishlist" && "fill-rose-400/60")} />
+              <span className="text-[10px] font-bold uppercase tracking-wider">{tab.label}</span>
+            </button>
+          );
+        })}
+      </nav>
 
       {/* FAB (Desktop Only) */}
-      <button
-        onClick={() => {
-          setEditingItem(null);
-          setIsModalOpen(true);
-        }}
-        className="hidden sm:flex fixed bottom-8 right-8 w-16 h-16 bg-white text-zinc-900 rounded-full shadow-2xl items-center justify-center hover:scale-110 active:scale-95 transition-all z-50"
-      >
-        <Plus className="w-8 h-8" />
-      </button>
+      {!isSelectionMode && (
+        <button
+          onClick={() => openNewItem()}
+          className={cn(
+            "hidden sm:flex fixed bottom-8 right-8 w-16 h-16 rounded-full shadow-2xl items-center justify-center hover:scale-110 active:scale-95 transition-all z-40",
+            view === "wishlist" ? "bg-rose-600 text-white" : "bg-white text-zinc-900",
+          )}
+          title="Aggiungi elemento (N)"
+          aria-label="Aggiungi elemento"
+        >
+          <Plus className="w-8 h-8" />
+        </button>
+      )}
 
       <ItemModal
         isOpen={isModalOpen}
         onClose={() => {
           setIsModalOpen(false);
           setEditingItem(null);
+          setNewItemPreset(null);
         }}
         onSave={handleSaveItem}
         initialData={editingItem}
-        existingAuthors={items.map((i) => i.author).filter(Boolean)}
+        preset={newItemPreset}
+        existingItems={items}
       />
 
       <AnimatePresence>
-        {isSelectionMode && (
+        {isSelectionMode && view !== "dashboard" && (
           <BulkToolbar
             count={selectedIds.length}
+            visibleCount={filteredItems.length}
             totalPrice={totalSelectedPrice}
             onEdit={() => setIsBulkEditModalOpen(true)}
             onDelete={() => setIsBulkDeleteConfirmOpen(true)}
+            onSelectAll={handleSelectAll}
             onClear={() => {
               setIsSelectionMode(false);
               setSelectedIds([]);
@@ -4056,35 +4927,35 @@ export default function App() {
 
       <DeleteConfirmationModal
         isOpen={isBulkDeleteConfirmOpen}
+        count={selectedIds.length}
         onConfirm={handleBulkDelete}
         onCancel={() => setIsBulkDeleteConfirmOpen(false)}
       />
 
       <BulkEditModal
         isOpen={isBulkEditModalOpen}
+        count={selectedIds.length}
         onClose={() => setIsBulkEditModalOpen(false)}
         onSave={handleBulkUpdate}
       />
 
-      <DeleteConfirmationModal
-        isOpen={!!itemToDelete}
-        onConfirm={confirmDelete}
-        onCancel={() => setItemToDelete(null)}
+      <DetailsModal
+        item={isModalOpen || itemToDelete ? null : selectedItemDetails}
+        allItems={items}
+        onClose={() => setDetailsId(null)}
+        onPatch={handlePatch}
+        onUpdateLoan={handleUpdateLoan}
+        onEdit={openEditItem}
+        onDelete={(id) => setItemToDelete(id)}
+        onMarkAsBought={handleMarkAsBought}
+        onNavigate={(it) => setDetailsId(it.id)}
       />
 
-      <DetailsModal
-        item={selectedItemDetails}
-        isOpen={!!selectedItemDetails}
-        onClose={() => setSelectedItemDetails(null)}
-        onUpdateStatus={handleUpdateStatus}
-        onUpdatePages={handleUpdatePages}
-        onUpdateLoan={handleUpdateLoan}
-        onEdit={(item) => {
-          setEditingItem(item);
-          setIsModalOpen(true);
-        }}
-        onDelete={handleDeleteItem}
-        onMarkAsBought={handleMarkAsBought}
+      <DeleteConfirmationModal
+        isOpen={!!itemToDelete}
+        title={items.find((i) => i.id === itemToDelete)?.title}
+        onConfirm={confirmDelete}
+        onCancel={() => setItemToDelete(null)}
       />
 
       <AlertConfirmModal
@@ -4096,33 +4967,70 @@ export default function App() {
         onClose={() => setAlertConfig((prev) => ({ ...prev, isOpen: false }))}
       />
 
-      {/* Floating Toast Notification */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            initial={{ opacity: 0, y: 50, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="fixed bottom-24 sm:bottom-10 left-1/2 -translate-x-1/2 z-50 bg-[#16161a]/95 border border-emerald-500/40 text-white px-5 py-3.5 rounded-2xl shadow-2xl flex items-center space-x-3.5 pointer-events-auto backdrop-blur-xl max-w-md w-[90vw] sm:w-auto"
-          >
-            <div className="w-8 h-8 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-              <CheckCircle2 className="w-5 h-5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold text-white truncate">{toast.message}</p>
-              {toast.submessage && (
-                <p className="text-xs text-zinc-400 truncate">{toast.submessage}</p>
+      {/* Toast */}
+      <div aria-live="polite" className="contents">
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, y: 50, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.95 }}
+              role={toast.variant === "error" ? "alert" : "status"}
+              className={cn(
+                "fixed left-1/2 -translate-x-1/2 z-[110] bg-[#16161a]/95 border text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 backdrop-blur-xl max-w-md w-[92vw] sm:w-auto sm:min-w-[320px]",
+                isSelectionMode ? "bottom-44 sm:bottom-28" : "bottom-28 sm:bottom-10",
+                toast.variant === "error"
+                  ? "border-red-500/40"
+                  : toast.variant === "info"
+                    ? "border-white/15"
+                    : "border-emerald-500/40",
               )}
-            </div>
-            <button
-              onClick={() => setToast(null)}
-              className="text-zinc-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
             >
-              <X className="w-4 h-4" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              <div
+                className={cn(
+                  "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
+                  toast.variant === "error"
+                    ? "bg-red-500/20 text-red-400"
+                    : toast.variant === "info"
+                      ? "bg-white/10 text-zinc-300"
+                      : "bg-emerald-500/20 text-emerald-400",
+                )}
+              >
+                {toast.variant === "error" ? (
+                  <AlertTriangle className="w-4 h-4" />
+                ) : toast.variant === "info" ? (
+                  <Info className="w-4 h-4" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-white truncate">{toast.message}</p>
+                {toast.submessage && <p className="text-xs text-zinc-400 truncate">{toast.submessage}</p>}
+              </div>
+              {toast.action && (
+                <button
+                  onClick={() => {
+                    toast.action?.onClick();
+                    setToast(null);
+                  }}
+                  className="text-xs font-bold text-[var(--color-brand-orange)] hover:text-orange-300 px-2 py-1 rounded-lg hover:bg-white/5 shrink-0"
+                >
+                  {toast.action.label}
+                </button>
+              )}
+              <button
+                onClick={() => setToast(null)}
+                aria-label="Chiudi notifica"
+                className="text-zinc-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

@@ -8,6 +8,90 @@ export interface CoverResult {
   source: 'OpenLibrary' | 'AniList' | 'MangaDex';
   author?: string;
   description?: string;
+  totalPages?: number;
+}
+
+/**
+ * Fetch JSON through the local Express proxy when available (dev / node server),
+ * falling back to the public API directly (static hosting such as GitHub Pages,
+ * where /api/proxy does not exist). All the upstream APIs used here allow CORS.
+ */
+async function fetchJsonWithFallback(
+  proxyUrl: string,
+  directUrl: string,
+  init?: RequestInit,
+): Promise<any> {
+  try {
+    const res = await fetch(proxyUrl, init);
+    const type = res.headers.get('content-type') || '';
+    if (res.ok && type.includes('application/json')) {
+      return await res.json();
+    }
+  } catch {
+    // proxy unavailable, try direct
+  }
+  const res = await fetch(directUrl, init);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export interface IsbnMetadata {
+  title?: string;
+  author?: string;
+  totalPages?: number;
+  coverUrl?: string;
+  description?: string;
+  genre?: string;
+}
+
+/**
+ * Look up book metadata by ISBN. Tries Google Books first, then Open Library.
+ */
+export async function lookupIsbn(rawIsbn: string): Promise<IsbnMetadata | null> {
+  const isbn = rawIsbn.replace(/[^0-9Xx]/g, '');
+  if (isbn.length !== 10 && isbn.length !== 13) return null;
+
+  try {
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+    const data = await res.json();
+    const info = data?.items?.[0]?.volumeInfo;
+    if (info) {
+      const thumb: string | undefined =
+        info.imageLinks?.thumbnail || info.imageLinks?.smallThumbnail;
+      return {
+        title: info.subtitle ? `${info.title}: ${info.subtitle}` : info.title,
+        author: info.authors?.join(', '),
+        totalPages: info.pageCount || undefined,
+        coverUrl: thumb
+          ? thumb.replace('http:', 'https:').replace('&edge=curl', '')
+          : undefined,
+        description: info.description,
+        genre: info.categories?.[0],
+      };
+    }
+  } catch (error) {
+    console.error('Google Books lookup error:', error);
+  }
+
+  try {
+    const res = await fetch(
+      `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`,
+    );
+    const data = await res.json();
+    const book = data?.[`ISBN:${isbn}`];
+    if (book) {
+      return {
+        title: book.title,
+        author: book.authors?.map((a: any) => a.name).join(', '),
+        totalPages: book.number_of_pages,
+        coverUrl: book.cover?.large || book.cover?.medium,
+        description: typeof book.notes === 'string' ? book.notes : undefined,
+      };
+    }
+  } catch (error) {
+    console.error('OpenLibrary ISBN lookup error:', error);
+  }
+  return null;
 }
 
 /**
@@ -15,15 +99,18 @@ export interface CoverResult {
  */
 export async function searchOpenLibrary(title: string): Promise<CoverResult[]> {
   try {
-    const response = await fetch(`/api/proxy/openlibrary?title=${encodeURIComponent(title)}`);
-    const data = await response.json();
-    
-    return data.docs
+    const data = await fetchJsonWithFallback(
+      `/api/proxy/openlibrary?title=${encodeURIComponent(title)}`,
+      `https://openlibrary.org/search.json?title=${encodeURIComponent(title)}&limit=8`,
+    );
+
+    return (data.docs || [])
       .filter((doc: any) => doc.cover_i)
-      .map((doc: any) => ({
+      .map((doc: any): CoverResult => ({
         title: doc.title,
         author: doc.author_name?.[0],
         coverUrl: `https://covers.openlibrary.org/b/id/${doc.cover_i}-L.jpg`,
+        totalPages: doc.number_of_pages_median,
         source: 'OpenLibrary' as const
       }));
   } catch (error) {
@@ -63,7 +150,7 @@ export async function searchAniList(title: string): Promise<CoverResult[]> {
   const variables = { search: title };
 
   try {
-    const response = await fetch('/api/proxy/anilist', {
+    const init: RequestInit = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -73,11 +160,10 @@ export async function searchAniList(title: string): Promise<CoverResult[]> {
         query,
         variables
       })
-    });
+    };
+    const data = await fetchJsonWithFallback('/api/proxy/anilist', 'https://graphql.anilist.co', init);
 
-    const data = await response.json();
-    
-    return data.data.Page.media.map((m: any) => ({
+    return (data?.data?.Page?.media || []).map((m: any) => ({
       title: m.title.english || m.title.romaji,
       author: m.staff?.nodes?.[0]?.name?.full,
       coverUrl: m.coverImage.large,
@@ -95,9 +181,11 @@ export async function searchAniList(title: string): Promise<CoverResult[]> {
  */
 export async function searchMangaDex(title: string): Promise<CoverResult[]> {
   try {
-    const response = await fetch(`/api/proxy/mangadex?title=${encodeURIComponent(title)}`);
-    const data = await response.json();
-    
+    const data = await fetchJsonWithFallback(
+      `/api/proxy/mangadex?title=${encodeURIComponent(title)}`,
+      `https://api.mangadex.org/manga?title=${encodeURIComponent(title)}&limit=5&includes[]=cover_art&includes[]=author`,
+    );
+
     if (!data.data) return [];
 
     return data.data.map((manga: any) => {
