@@ -18,7 +18,7 @@ async function startServer() {
     if (!title) return res.status(400).json({ error: "Title is required" });
 
     try {
-      const response = await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(title as string)}&limit=5`);
+      const response = await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(title as string)}&limit=8`);
       const data = await response.json();
       res.json(data);
     } catch (error) {

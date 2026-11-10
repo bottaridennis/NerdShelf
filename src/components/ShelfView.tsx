@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Book as BookIcon, CheckCircle2, Heart } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { Heart } from 'lucide-react';
+import { cn, getVolume } from '../lib/utils';
 
 function stringHash(str: string): number {
   let hash = 0;
@@ -31,8 +31,8 @@ export function ShelfView({ items, onEdit, onOpenDetails }: ShelfViewProps) {
       const seriesCmp = seriesA.localeCompare(seriesB);
       if (seriesCmp !== 0) return seriesCmp;
       
-      const volA = a.volumeNumber ?? 0;
-      const volB = b.volumeNumber ?? 0;
+      const volA = getVolume(a) ?? 0;
+      const volB = getVolume(b) ?? 0;
       return volA - volB;
     });
     return arr;
@@ -72,7 +72,7 @@ export function ShelfView({ items, onEdit, onOpenDetails }: ShelfViewProps) {
         {/* Fill empty space if there are no items */}
         {groupedAndSorted.length === 0 && (
           <div className="w-full h-[380px] flex items-center justify-center">
-            <p className="text-zinc-500 font-serif italic">Your shelf is empty.</p>
+            <p className="text-zinc-500 font-serif italic">Lo scaffale è vuoto.</p>
           </div>
         )}
 
@@ -90,6 +90,7 @@ export function ShelfView({ items, onEdit, onOpenDetails }: ShelfViewProps) {
           const spineColor = getColorFromHash(hash);
           const bookmarkColor = `hsl(${(Math.abs(hash) + 40) % 360}, 80%, 55%)`;
           const isRead = item.status === 'read';
+          const volume = getVolume(item);
           
           // Calculate dynamic font size based on available height and title length
           const availableHeight = height - 90; // 50px for bottom badge, 40px for top margins/bookmark
@@ -103,9 +104,19 @@ export function ShelfView({ items, onEdit, onOpenDetails }: ShelfViewProps) {
           return (
             <div key={item.id} className="flex items-end justify-center h-[380px] pb-[48px] px-[1px] shrink-0">
               <motion.div
+                role="button"
+                tabIndex={0}
+                aria-label={`${item.title}${volume ? ` vol. ${volume}` : ''}`}
+                title={`${item.title}${volume ? ` · Vol. ${volume}` : ''}${item.author ? ` — ${item.author}` : ''}`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onOpenDetails ? onOpenDetails(item) : onEdit(item);
+                  }
+                }}
                 onClick={() => onOpenDetails ? onOpenDetails(item) : onEdit(item)}
                 whileHover={{ y: -8 }}
-                className="spine-element relative cursor-pointer flex flex-col justify-end items-center group transition-shadow rounded-t-[3px] shrink-0"
+                className="spine-element relative cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand-orange)] flex flex-col justify-end items-center group transition-shadow rounded-t-[3px] shrink-0"
                 style={{
                   height: `calc(${height}px * var(--spine-scale))`,
                   width: `calc(${thickness}px * var(--spine-scale))`,
@@ -150,10 +161,10 @@ export function ShelfView({ items, onEdit, onOpenDetails }: ShelfViewProps) {
                   </span>
                 </div>
                 
-                {item.volumeNumber && (
+                {volume !== undefined && (
                   <div className="absolute bottom-5 left-0 right-0 flex justify-center z-10">
                     <div className="w-6 h-6 flex items-center justify-center bg-zinc-900/90 border border-white/20 rounded-full shadow-lg">
-                      <span className="text-white font-bold text-[10px] leading-none">{item.volumeNumber}</span>
+                      <span className="text-white font-bold text-[10px] leading-none">{volume}</span>
                     </div>
                   </div>
                 )}
