@@ -3841,6 +3841,16 @@ export default function App() {
     });
   }, [viewItems, search, filter, statusFilter, sortBy]);
 
+  // On the shelf, "newest first" would scatter the volumes of a series:
+  // keep series together (by volume) unless the user picked another order.
+  const shelfItems = useMemo(() => {
+    if (sortBy !== "date") return filteredItems;
+    return [...filteredItems].sort((a, b) => {
+      const cmp = (a.seriesName || a.title).localeCompare(b.seriesName || b.title, undefined, { numeric: true });
+      return cmp !== 0 ? cmp : (getVolume(a) ?? 0) - (getVolume(b) ?? 0);
+    });
+  }, [filteredItems, sortBy]);
+
   const groupedItems = useMemo(() => {
     const groups: Record<string, LibraryItem[]> = {};
     const standalone: LibraryItem[] = [];
@@ -4733,9 +4743,12 @@ export default function App() {
               emptyState
             ) : view === "shelf" ? (
               <ShelfView
-                items={filteredItems}
+                items={shelfItems}
                 onEdit={openEditItem}
                 onOpenDetails={(it) => setDetailsId(it.id)}
+                selectionMode={isSelectionMode}
+                selectedIds={selectedIds}
+                onSelect={toggleSelection}
               />
             ) : groupBySeries ? (
               <div className="space-y-10">
